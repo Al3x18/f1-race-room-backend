@@ -5,6 +5,7 @@
         "figsize",
         "jsonify",
         "Matplotlib",
+        "WSGI",
         "xlabel",
         "ylabel"
     ]
