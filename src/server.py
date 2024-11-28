@@ -52,7 +52,7 @@ if __name__ == '__main__':
         try:
             port = int(sys.argv[1])
         except ValueError:
-            print("Invalid port number. Using default port 5000.")
+            print(f"Invalid port number. Using default port {port}.")
     
     print(f"Server started on port {port}...")
     server.run(host='0.0.0.0', port=port)
