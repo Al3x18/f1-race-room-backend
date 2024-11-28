@@ -1,7 +1,7 @@
 import sys
 from flask import Flask, jsonify, request
-from src.telemetry import Telemetry
-from src.send_telemetry_file import SendTelemetryFile
+from telemetry import Telemetry
+from send_telemetry_file import SendTelemetryFile
 
 server = Flask(__name__)
 
