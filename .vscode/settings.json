@@ -5,6 +5,8 @@
         "figsize",
         "jsonify",
         "Matplotlib",
+        "pycache",
+        "venv",
         "WSGI",
         "xlabel",
         "ylabel"
