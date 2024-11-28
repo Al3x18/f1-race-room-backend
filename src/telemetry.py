@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 
 matplotlib.use('Agg')  # Non-interactive backend
 
+ff1.Cache.clear_cache()
+ff1.Cache.disabled = True
+
 class Telemetry:
     def __init__(self, year: int, track_name: str, session: str, driver_name: str):
         self.year = year
