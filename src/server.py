@@ -1,13 +1,13 @@
 import sys
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
 from send_telemetry_file import SendTelemetryFile
 
-server = Flask(__name__)
+server = Flask(__name__, template_folder='../templates')
 
 @server.route('/')
 def index():
-    return 'Race Room Server!'
+    return render_template('index.html')
 
 @server.route('/status')
 def status():
