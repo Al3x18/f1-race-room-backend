@@ -16,3 +16,13 @@ To run the backend server, you need to install the following dependencies:
 flask
 fastf1
 matplotlib
+uwsgi
+```
+
+## Usage
+
+To start the server, run the following command in the terminal:
+
+```bash
+uwsgi --ini uwsgi.ini
+```
