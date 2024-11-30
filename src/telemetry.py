@@ -56,7 +56,7 @@ class Telemetry:
             plt.plot(telemetry['Distance'], telemetry['Speed'], label='Speed (km/h)', color='blue')
             plt.xlabel('Distance (m)')
             plt.ylabel('Speed (km/h)')
-            plt.title(f'TELEMETRY DATA\n{self.driver_name} ({self.session}, {self.track_name}, {self.year})\nLap: {formatted_lap_time}\nPersonal Best: {"Yes" if fastest_lap.IsPersonalBest else "No"}\nCompound: {fastest_lap.Compound}\nTyre Life: {fastest_lap.TyreLife} laps\nFresh Tyre: {"Yes" if fastest_lap.FreshTyre else "No"}\nTeam: {fastest_lap.Team}')
+            plt.title(f'FASTEST LAP TELEMETRY DATA\n\n{self.driver_name} ({self.session}, {self.track_name}, {self.year})\nLap: {formatted_lap_time}\nPersonal Best: {"Yes" if fastest_lap.IsPersonalBest else "No"}\nCompound: {fastest_lap.Compound}\nTyre Life: {fastest_lap.TyreLife} laps\nFresh Tyre: {"Yes" if fastest_lap.FreshTyre else "No"}\nTeam: {fastest_lap.Team}\n')
             plt.legend()
 
             # Throttle plot
