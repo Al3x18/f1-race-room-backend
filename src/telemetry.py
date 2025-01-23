@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 matplotlib.use('Agg')  # Non-interactive backend
 
-ff1.Cache.clear_cache() # Clear cache
+#ff1.Cache.clear_cache() # Clear cache
 ff1.Cache.disabled = True # Disable caching
 
 class Telemetry:
