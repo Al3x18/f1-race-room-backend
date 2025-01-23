@@ -4,7 +4,7 @@ from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
 from send_telemetry_file import SendTelemetryFile
 
-server = Flask(__name__, template_folder='../templates')
+server = Flask(__name__, template_folder='../templates', static_folder='../static')
 
 @server.route('/')
 def index():
@@ -32,6 +32,15 @@ def get_telemetry():
 
         response = send_manager.send_file_from_path(file_path=file_path)
         send_manager.delete_file(file_path) # Remove to keep the file on the server
+
+        # Clear the contents of the custom cache folder
+        cache_dir = './custom_cache'
+        import shutil
+
+        # Clear the contents of the custom cache folder
+        if os.path.exists(cache_dir):
+            shutil.rmtree(cache_dir)
+            os.makedirs(cache_dir)  # Recreate the cache directory
 
         if response.status_code != 200:
             print(f"Error sending telemetry file: {response.data}")

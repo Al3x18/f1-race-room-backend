@@ -2,11 +2,15 @@ import os
 import fastf1 as ff1
 import matplotlib
 import matplotlib.pyplot as plt
+import shutil
 
 matplotlib.use('Agg')  # Non-interactive backend
 
-#ff1.Cache.clear_cache() # Clear cache
-ff1.Cache.disabled = True # Disable caching
+# Define a custom cache directory
+cache_directory = "./custom_cache" 
+os.makedirs(cache_directory, exist_ok=True)
+
+ff1.Cache.enable_cache(cache_directory)
 
 class Telemetry:
     def __init__(self, year: int, track_name: str, session: str, driver_name: str):

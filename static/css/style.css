@@ -23,6 +23,10 @@ h1 {
     font-weight: 700;
 }
 
+.description {
+    text-align: center;
+}
+
 div {
     max-width: 800px;
     margin: 0 auto;
