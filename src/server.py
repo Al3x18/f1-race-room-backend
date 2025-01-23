@@ -1,5 +1,5 @@
 import os
-import sys
+#import sys
 from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
 from send_telemetry_file import SendTelemetryFile
