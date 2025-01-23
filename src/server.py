@@ -66,6 +66,6 @@ def get_telemetry():
 #     server.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5050))  # Usa la porta di Render, altrimenti usa la porta 5050
+    port = int(os.environ.get("PORT", 5050))  # Use Render's port, otherwise use port 5050
     print(f"Server started on port {port}...")
     server.run(host='0.0.0.0', port=port)

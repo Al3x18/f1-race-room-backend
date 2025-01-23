@@ -1,5 +1,6 @@
 import os
 import fastf1 as ff1
+from flask import jsonify
 import matplotlib
 import matplotlib.pyplot as plt
 import shutil
@@ -32,11 +33,11 @@ class Telemetry:
         try:
             session = self.load_session_data()
             if session is None:
-                return "Error: Session data could not be loaded", 500
+                return jsonify({"error": "Session data could not be loaded"}), 500
 
             driver_laps = session.laps.pick_drivers(self.driver_name)
             if driver_laps.empty:
-                return f"Error: No laps found for driver {self.driver_name}", 404
+                return jsonify({"error": f"No laps found for driver {self.driver_name}"}), 40
 
             fastest_lap = driver_laps.pick_fastest()
             telemetry = fastest_lap.get_telemetry()
