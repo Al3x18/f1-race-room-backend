@@ -1,3 +1,4 @@
+import os
 import sys
 from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
@@ -46,13 +47,18 @@ def get_telemetry():
         print(f"Error: {e}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-if __name__ == '__main__':
-    port = 5050  # default port
-    if len(sys.argv) > 1:
-        try:
-            port = int(sys.argv[1])
-        except ValueError:
-            print(f"Invalid port number. Using default port {port}.")
+# if __name__ == '__main__':
+#     port = 5050  # default port
+#     if len(sys.argv) > 1:
+#         try:
+#             port = int(sys.argv[1])
+#         except ValueError:
+#             print(f"Invalid port number. Using default port {port}.")
     
+#     print(f"Server started on port {port}...")
+#     server.run(host='0.0.0.0', port=port)
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5050))  # Usa la porta di Render, altrimenti usa la porta 5050
     print(f"Server started on port {port}...")
     server.run(host='0.0.0.0', port=port)
