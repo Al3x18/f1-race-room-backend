@@ -1,5 +1,5 @@
 import os
-#import sys
+import sys
 import shutil
 from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
@@ -35,10 +35,10 @@ def get_telemetry():
         send_manager.delete_file(file_path) # Remove to keep the file on the server
 
         # Clear the contents of the custom cache folder
-        cache_dir = './custom_cache'
-        if os.path.exists(cache_dir):
-            shutil.rmtree(cache_dir)
-            os.makedirs(cache_dir)  # Recreate the cache directory
+        # cache_dir = './custom_cache'
+        # if os.path.exists(cache_dir):
+        #     shutil.rmtree(cache_dir)
+        #     os.makedirs(cache_dir)  # Recreate the cache directory
 
         if response.status_code != 200:
             print(f"Error sending telemetry file: {response.data}")
@@ -54,18 +54,20 @@ def get_telemetry():
         print(f"Error: {e}")
         return jsonify({'error': f'An error occurred: {str(e)}'}), 500
 
-# if __name__ == '__main__':
-#     port = 5050  # default port
-#     if len(sys.argv) > 1:
-#         try:
-#             port = int(sys.argv[1])
-#         except ValueError:
-#             print(f"Invalid port number. Using default port {port}.")
-    
-#     print(f"Server started on port {port}...")
-#     server.run(host='0.0.0.0', port=port)
-
+# Used for uwsgi
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5050))  # Use Render's port, otherwise use port 5050
+    port = 5050  # default port
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            print(f"Invalid port number. Using default port {port}.")
+    
     print(f"Server started on port {port}...")
     server.run(host='0.0.0.0', port=port)
+
+# Used for gunicorn
+# if __name__ == '__main__':
+#     port = int(os.environ.get("PORT", "5050"))  # Use Render's port, otherwise use port 5050
+#     print(f"Server started on port {port}...")
+#     server.run(host='0.0.0.0', port=port)

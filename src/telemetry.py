@@ -12,6 +12,7 @@ cache_directory = "./custom_cache"
 os.makedirs(cache_directory, exist_ok=True)
 
 ff1.Cache.enable_cache(cache_directory)
+ff1.Cache.set_disabled()
 
 class Telemetry:
     def __init__(self, year: int, track_name: str, session: str, driver_name: str):
@@ -28,6 +29,9 @@ class Telemetry:
         except Exception as e:
             print(f"Error loading session data: {e}")
             return None
+        finally:
+            ff1.Cache.clear_cache(cache_dir=cache_directory)
+            print("Cache cleared")
 
     def get_fl_telemetry(self):
         try:
