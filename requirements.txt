@@ -2,4 +2,3 @@ Flask
 fastf1
 matplotlib
 uwsgi
-gunicorn
