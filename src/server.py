@@ -1,5 +1,6 @@
 import os
 #import sys
+import shutil
 from flask import Flask, jsonify, render_template, request
 from telemetry import Telemetry
 from send_telemetry_file import SendTelemetryFile
@@ -35,9 +36,6 @@ def get_telemetry():
 
         # Clear the contents of the custom cache folder
         cache_dir = './custom_cache'
-        import shutil
-
-        # Clear the contents of the custom cache folder
         if os.path.exists(cache_dir):
             shutil.rmtree(cache_dir)
             os.makedirs(cache_dir)  # Recreate the cache directory
