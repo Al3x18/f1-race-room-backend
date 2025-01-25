@@ -41,7 +41,7 @@ class Telemetry:
 
             driver_laps = session.laps.pick_drivers(self.driver_name)
             if driver_laps.empty:
-                return jsonify({"error": f"No laps found for driver {self.driver_name}"}), 40
+                return jsonify({"error": f"No laps found for driver {self.driver_name}"}), 404
 
             fastest_lap = driver_laps.pick_fastest()
             telemetry = fastest_lap.get_telemetry()
