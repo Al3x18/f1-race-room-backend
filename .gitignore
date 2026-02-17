@@ -1,7 +1,7 @@
 .DS_Store
 .vscode/
 __pycache__/
-.pytest_cache/
+.pytest_cache
 
 # Python virtual environments
 .venv/
