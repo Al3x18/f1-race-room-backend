@@ -1,5 +1,9 @@
-Flask
+fastapi
+uvicorn[standard]
+httpx
+jinja2
 fastf1
+signalrcore
 matplotlib
-uwsgi
 gunicorn
+pytest
