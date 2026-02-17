@@ -1,20 +1,103 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Race Room Server</title>
-    <link rel="stylesheet" href="../static/css/style.css">
+    <title>F1 Race Room Backend</title>
+    <link rel="stylesheet" href="{{ request.url_for('static', path='css/style.css') }}?v=20260217-3">
 </head>
 <body>
-    <h1>Welcome to the Race Room Server!</h1>
-    <p class="description">This page is served using Flask</p>
-    <div>
-        <ul>
-            <li><a href="/status">Status</a></li>
-            <li><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER">Get Telemetry</a></li>
-            <p>To use <strong>get-telemetry/</strong> need to provide year, track name, session and driver name <br><strong>(es. /get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER)</strong></p>
-        </ul>
-    </div>
+    <main class="layout">
+        <section class="hero">
+            <p class="eyebrow">FastAPI Live Timing</p>
+            <h1>F1 Race Room Backend</h1>
+            <p class="subtitle">API pronta per client app: snapshot, stream SSE, reload e endpoint legacy PDF.</p>
+
+            <div class="badges">
+                <span class="badge">provider default: <strong>{{ provider }}</strong></span>
+                <span class="badge">provider chain: <strong>{{ provider_order }}</strong></span>
+                <span class="badge">poll: <strong>{{ live_poll_ms }}ms</strong></span>
+                <span class="badge">heartbeat: <strong>{{ live_heartbeat_sec }}s</strong></span>
+            </div>
+        </section>
+
+        <section class="panel status-panel panel-status">
+            <div class="panel-head">
+                <h2>Runtime Status</h2>
+                <button id="refresh-status" type="button">Refresh</button>
+            </div>
+            <pre id="status-json">Loading...</pre>
+        </section>
+
+        <section class="panel panel-live">
+            <h2>Live Endpoints</h2>
+            <ul class="endpoints">
+                <li><span class="method get">GET</span><a href="/live/session/current" target="_blank" rel="noreferrer">/live/session/current</a><small>Sessione corrente in cache</small></li>
+                <li><span class="method get">GET</span><a href="/live/timing/snapshot" target="_blank" rel="noreferrer">/live/timing/snapshot</a><small>Snapshot completo live</small></li>
+                <li><span class="method get">GET</span><a href="/live/timing/stream" target="_blank" rel="noreferrer">/live/timing/stream</a><small>SSE update/heartbeat</small></li>
+                <li><span class="method post">POST</span><a href="/live/reload" target="_blank" rel="noreferrer">/live/reload</a><small>Forza un poll immediato</small></li>
+            </ul>
+        </section>
+
+        <section class="panel panel-legacy">
+            <h2>Legacy Endpoints</h2>
+            <ul class="endpoints">
+                <li><span class="method get">GET</span><a href="/status" target="_blank" rel="noreferrer">/status</a><small>Health sintetico backend</small></li>
+                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry</a><small>PDF telemetry, params richiesti: year, trackName, session, driverName</small></li>
+            </ul>
+        </section>
+
+        <section class="panel panel-data two-cols">
+            <div>
+                <h2>Dati Per Pilota</h2>
+                <ul class="data-list">
+                    <li>Posizione, gap leader, interval</li>
+                    <li>Lap time, settori, microsettori</li>
+                    <li>Compound e laps su gomma corrente</li>
+                    <li>Stato pit e metadati pilota/team</li>
+                </ul>
+            </div>
+            <div>
+                <h2>Microsettori Labels</h2>
+                <ul class="data-list mono">
+                    <li><code>0</code> -> <code>no_data</code></li>
+                    <li><code>2048</code> -> <code>slower</code></li>
+                    <li><code>2049</code> -> <code>improved</code></li>
+                    <li><code>2051</code> -> <code>best_overall</code></li>
+                    <li><code>2064</code> -> <code>pitlane</code></li>
+                    <li>altri -> <code>unknown</code></li>
+                </ul>
+            </div>
+        </section>
+
+        <section class="panel panel-commands">
+            <h2>Comandi Rapidi</h2>
+            <div class="cmd-grid">
+                <pre><code>curl -s /status | jq</code></pre>
+                <pre><code>curl -s /live/session/current | jq</code></pre>
+                <pre><code>curl -s /live/timing/snapshot | jq</code></pre>
+                <pre><code>curl -N /live/timing/stream</code></pre>
+                <pre><code>curl -s -X POST /live/reload | jq</code></pre>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const statusEl = document.getElementById('status-json');
+        const refreshBtn = document.getElementById('refresh-status');
+
+        async function loadStatus() {
+            try {
+                const response = await fetch('/status', { cache: 'no-store' });
+                const data = await response.json();
+                statusEl.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                statusEl.textContent = `Unable to load /status: ${error}`;
+            }
+        }
+
+        refreshBtn.addEventListener('click', loadStatus);
+        loadStatus();
+    </script>
 </body>
 </html>
