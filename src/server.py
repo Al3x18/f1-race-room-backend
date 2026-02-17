@@ -1,73 +1,232 @@
+from __future__ import annotations
+
+import asyncio
 import os
-import sys
-import shutil
-from flask import Flask, jsonify, render_template, request
-from telemetry import Telemetry
-from send_telemetry_file import SendTelemetryFile
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
 
-server = Flask(__name__, template_folder='../templates', static_folder='../static')
+import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 
-@server.route('/')
-def index():
-    return render_template('index.html')
+from src.live import (
+    AppSettings,
+    LiveAggregator,
+    LiveService,
+    OpenF1Provider,
+    SSEBroadcaster,
+    UnofficialF1SignalRProvider,
+)
+from src.send_telemetry_file import SendTelemetryFile
+from src.telemetry import Telemetry, TelemetryError
 
-@server.route('/status')
-def status():
-    return jsonify({'status': 'online'})
 
-@server.route('/get-telemetry', methods=['GET'])
-def get_telemetry():
-    try:
-        # Get parameters from request
-        year = int(request.args.get('year'))
-        track_name = request.args.get('trackName')
-        session = request.args.get('session')
-        driver_name = request.args.get('driverName')
+def _default_provider_order(provider: str):
+    mapping = {
+        "signalr": ["signalr"],
+        "openf1": ["openf1", "signalr"],
+    }
+    return mapping.get(provider, ["signalr"])
 
+
+def _build_providers(settings: AppSettings):
+    openf1_provider = OpenF1Provider(
+        base_url=settings.openf1_base_url,
+        api_key=settings.openf1_api_key,
+    )
+    signalr_provider = UnofficialF1SignalRProvider(
+        connection_url=settings.signalr_connection_url,
+        negotiate_url=settings.signalr_negotiate_url,
+        timeout_sec=settings.signalr_timeout_sec,
+        no_auth=settings.signalr_no_auth,
+        access_token=settings.signalr_access_token,
+        verify_ssl=settings.signalr_verify_ssl,
+    )
+
+    registry = {
+        "openf1": openf1_provider,
+        "signalr": signalr_provider,
+    }
+
+    order = settings.provider_order or _default_provider_order(settings.provider)
+    resolved = []
+    seen = set()
+    for name in order:
+        if name == "openf1" and not settings.openf1_api_key:
+            continue
+        provider = registry.get(name)
+        if provider and name not in seen:
+            resolved.append(provider)
+            seen.add(name)
+
+    if not resolved:
+        resolved = [signalr_provider]
+
+    return resolved
+
+
+def create_app(
+    settings: Optional[AppSettings] = None,
+    primary_provider=None,
+    fallback_provider=None,
+) -> FastAPI:
+    app_settings = settings or AppSettings.from_env()
+    aggregator = LiveAggregator()
+
+    if primary_provider is None and fallback_provider is None:
+        providers = _build_providers(app_settings)
+    else:
+        providers = []
+        if primary_provider is not None:
+            providers.append(primary_provider)
+        if fallback_provider is not None:
+            providers.append(fallback_provider)
+
+    live_service = LiveService(
+        aggregator=aggregator,
+        providers=providers,
+        poll_ms=app_settings.live_poll_ms,
+    )
+    sse_broadcaster = SSEBroadcaster(
+        aggregator=aggregator,
+        heartbeat_sec=app_settings.live_heartbeat_sec,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await live_service.start()
+        await live_service.reload()
+        yield
+        await live_service.stop()
+
+    server = FastAPI(title="F1 Race Room Backend", lifespan=lifespan)
+
+    base_dir = Path(__file__).resolve().parent.parent
+    templates = Jinja2Templates(directory=str(base_dir / "templates"))
+    server.mount("/static", StaticFiles(directory=str(base_dir / "static")), name="static")
+
+    server.add_middleware(
+        CORSMiddleware,
+        allow_origins=app_settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    server.state.settings = app_settings
+    server.state.aggregator = aggregator
+    server.state.live_service = live_service
+    server.state.sse_broadcaster = sse_broadcaster
+
+    @server.get("/")
+    async def index(request: Request):
+        settings = server.state.settings
+        provider_order = settings.provider_order or _default_provider_order(settings.provider)
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "provider": settings.provider,
+                "provider_order": ",".join(provider_order),
+                "live_poll_ms": settings.live_poll_ms,
+                "live_heartbeat_sec": settings.live_heartbeat_sec,
+            },
+        )
+
+    @server.get("/status")
+    async def status():
+        snapshot = server.state.aggregator.get_snapshot()
+        return {
+            "status": snapshot["status"],
+            "provider": snapshot["provider"],
+            "version": snapshot["version"],
+        }
+
+    @server.get("/get-telemetry")
+    async def get_telemetry(
+        year: Optional[int] = Query(default=None),
+        track_name: Optional[str] = Query(default=None, alias="trackName"),
+        session: Optional[str] = Query(default=None),
+        driver_name: Optional[str] = Query(default=None, alias="driverName"),
+    ):
+        if year is None or not track_name or not session or not driver_name:
+            return JSONResponse(
+                {
+                    "error": (
+                        "Missing required parameters: year, trackName, session, driverName"
+                    )
+                },
+                status_code=400,
+            )
+
+        telemetry = Telemetry(
+            year=year,
+            track_name=track_name,
+            session=session,
+            driver_name=driver_name,
+        )
         send_manager = SendTelemetryFile()
 
-        print(f"Received request with parameters: year={year}, trackName={track_name}, session={session}, driverName={driver_name}")
-
-        telemetry = Telemetry(year=year, track_name=track_name, session=session, driver_name=driver_name)
-        file_path = telemetry.get_fl_telemetry()
-
-        response = send_manager.send_file_from_path(file_path=file_path)
-        send_manager.delete_file(file_path) # Remove to keep the file on the server
-
-        # Clear the contents of the custom cache folder
-        # cache_dir = './custom_cache'
-        # if os.path.exists(cache_dir):
-        #     shutil.rmtree(cache_dir)
-        #     os.makedirs(cache_dir)  # Recreate the cache directory
-
-        if response.status_code != 200:
-            print(f"Error sending telemetry file: {response.data}")
-            return jsonify({'error': 'Error sending telemetry file'}), 500
-        
-        print("Telemetry file sent successfully")
-        return response
-    
-    except AttributeError as e:
-        print(f"AttributeError: {e}")
-        return jsonify({'error': 'Data not found. Could not process telemetry data. Please check the provided parameters.'}), 400
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
-
-# Used for uwsgi
-if __name__ == '__main__':
-    port = 5050  # default port
-    if len(sys.argv) > 1:
         try:
-            port = int(sys.argv[1])
-        except ValueError:
-            print(f"Invalid port number. Using default port {port}.")
-    
-    print(f"Server started on port {port}...")
-    server.run(host='0.0.0.0', port=port)
+            file_path = await asyncio.to_thread(telemetry.get_fl_telemetry)
+            response = send_manager.send_file_from_path(file_path=file_path)
+            response.background = BackgroundTask(send_manager.delete_file, file_path)
+            return response
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TelemetryError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Data not found. Could not process telemetry data. "
+                    "Please check the provided parameters."
+                ),
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"An error occurred: {exc}") from exc
 
-# Used for gunicorn
-# if __name__ == '__main__':
-#     port = int(os.environ.get("PORT", "5050"))  # Use Render's port, otherwise use port 5050
-#     print(f"Server started on port {port}...")
-#     server.run(host='0.0.0.0', port=port)
+    @server.get("/live/session/current")
+    async def live_session_current():
+        snapshot = server.state.aggregator.get_snapshot()
+        return {
+            "version": snapshot["version"],
+            "provider": snapshot["provider"],
+            "status": snapshot["status"],
+            "session": snapshot["current_session"],
+        }
+
+    @server.get("/live/timing/snapshot")
+    async def live_timing_snapshot():
+        return server.state.aggregator.get_snapshot()
+
+    @server.get("/live/timing/stream")
+    async def live_timing_stream(request: Request):
+        return StreamingResponse(
+            server.state.sse_broadcaster.stream(request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @server.post("/live/reload")
+    async def live_reload():
+        snapshot = await server.state.live_service.reload()
+        return snapshot
+
+    return server
+
+
+server = create_app()
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "5050"))
+    uvicorn.run("src.server:server", host="0.0.0.0", port=port, reload=False)
