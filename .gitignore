@@ -1,5 +1,16 @@
 .DS_Store
-/venv
-/.vscode
+.vscode/
 __pycache__/
-src/server_log
+.pytest_cache/
+
+# Python virtual environments
+.venv/
+venv/
+
+# Local environment files
+.env
+
+# Runtime/generated artifacts
+custom_cache/
+telemetry_files/
+src/server_log/
