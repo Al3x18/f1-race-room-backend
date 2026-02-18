@@ -4,7 +4,8 @@
 
 This backend exposes two groups of APIs:
 
-- Legacy APIs used by the existing client (`/status`, `/get-telemetry`)
+- Legacy APIs used by the existing client (`/status`, `/get-telemetry`, `/get-telemetry-compare`)
+- Legacy catalog APIs for FastF1 parameter discovery (`/legacy/catalog/*`)
 - Live timing APIs for real-time integration (`/live/*`)
 
 Stack:
@@ -98,6 +99,104 @@ Query params:
 
 Returns: PDF attachment (`application/pdf`).
 
+## `GET /get-telemetry-compare`
+
+Legacy endpoint for comparative PDF telemetry generation (two drivers, overlaid charts).
+
+Query params:
+
+- `year` (int)
+- `trackName` (string)
+- `session` (string)
+- `driverA` (string)
+- `driverB` (string)
+
+Returns: PDF attachment (`application/pdf`).
+
+Notes:
+
+- Speed, throttle, and brake are plotted in overlay mode (`driverA` vs `driverB`).
+- Corner numbers are shown under all three graphs when circuit corner metadata is available.
+- Speed chart includes corner-based speed annotations in km/h.
+
+## `GET /legacy/catalog/events`
+
+Returns available events and sessions for a given year from FastF1 schedule.
+
+Query params:
+
+- `year` (int, required)
+
+Example response:
+
+```json
+{
+  "year": 2024,
+  "events": [
+    {
+      "round_number": 8,
+      "event_name": "Monaco Grand Prix",
+      "official_event_name": "FORMULA 1 GRAND PRIX DE MONACO 2024",
+      "country": "Monaco",
+      "location": "Monte Carlo",
+      "event_format": "conventional",
+      "event_date": "2024-05-26T00:00:00+00:00",
+      "sessions": [
+        {"name": "Practice 1", "code": "FP1", "date": "2024-05-24T11:30:00+00:00"},
+        {"name": "Qualifying", "code": "Q", "date": "2024-05-25T15:00:00+00:00"},
+        {"name": "Race", "code": "R", "date": "2024-05-26T13:00:00+00:00"}
+      ]
+    }
+  ]
+}
+```
+
+## `GET /legacy/catalog/drivers`
+
+Returns available drivers for a specific year/event/session (telemetry readiness).
+
+Query params:
+
+- `year` (int, required)
+- `trackName` (string, required)
+- `session` (string, required)
+
+Example response:
+
+```json
+{
+  "year": 2024,
+  "track_name": "Monaco",
+  "session": "Q",
+  "drivers": [
+    {
+      "driver_code": "VER",
+      "driver_number": "1",
+      "full_name": "Max Verstappen",
+      "team_name": "Red Bull Racing",
+      "available_telemetry": true
+    }
+  ]
+}
+```
+
+Notes:
+
+- `available_telemetry=true` indicates the driver appears in loaded laps for that session.
+- Use this endpoint to avoid client hardcoded driver lists.
+
+## `GET /legacy/catalog/years`
+
+Returns years where FastF1 schedule data is available.
+
+Example response:
+
+```json
+{
+  "years": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
+}
+```
+
 ## `GET /live/session/current`
 
 Returns session metadata currently cached in memory.
@@ -148,8 +247,12 @@ Each `timing.rows[]` item contains consolidated per-driver data:
     "name_acronym": "VER",
     "broadcast_name": "M VERSTAPPEN",
     "full_name": "Max Verstappen",
+    "first_name": "Max",
+    "last_name": "Verstappen",
+    "country_code": "NED",
     "team_name": "Red Bull Racing",
-    "team_colour": "3671C6"
+    "team_colour": "3671C6",
+    "headshot_url": "https://..."
   },
   "position": 1,
   "gap_to_leader": 0,
@@ -161,6 +264,10 @@ Each `timing.rows[]` item contains consolidated per-driver data:
     "sector_1": 30.101,
     "sector_2": 31.222,
     "sector_3": 30.800,
+    "i1_speed": 280,
+    "i2_speed": 300,
+    "st_speed": 330,
+    "is_personal_best": true,
     "microsectors_1": [2048, 2048, 2049],
     "microsectors_1_labels": ["slower", "slower", "improved"],
     "microsectors_2": [2051, 2048, 2048],
@@ -184,6 +291,21 @@ Each `timing.rows[]` item contains consolidated per-driver data:
     "lane_duration": 18.3,
     "stop_duration": 2.4
   },
+  "car": {
+    "speed": 305,
+    "throttle": 98,
+    "brake": 0,
+    "rpm": 11930,
+    "n_gear": 8,
+    "drs": 12,
+    "date": "2026-02-18T12:20:39.901000+00:00"
+  },
+  "location": {
+    "x": 1234.5,
+    "y": 678.9,
+    "z": 2.0,
+    "date": "2026-02-18T12:20:39.901000+00:00"
+  },
   "date": "2026-02-18T12:20:40+00:00"
 }
 ```
@@ -192,6 +314,12 @@ Notes:
 
 - `is_in_pit` is heuristic (derived from latest pit/lap updates).
 - Some fields can be `null` when upstream source is missing that metric.
+- With `provider=openf1`, `timing.openf1_extras` includes:
+  - `weather`: latest weather sample
+  - `race_control_messages`: latest 50 race control items
+  - `team_radio_messages`: latest 30 team radio items
+  - `overtakes`: latest 30 overtakes
+  - `counts`: source counters (`drivers`, `positions`, `laps`, `car_data`, etc.)
 
 ## `GET /live/timing/stream` (SSE)
 

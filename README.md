@@ -7,6 +7,10 @@ Python FastAPI backend for F1 PDF telemetry (legacy-compatible) and live timing,
 - Keeps legacy endpoints used by the existing client:
   - `GET /status`
   - `GET /get-telemetry`
+  - `GET /get-telemetry-compare`
+  - `GET /legacy/catalog/years`
+  - `GET /legacy/catalog/events`
+  - `GET /legacy/catalog/drivers`
 - Exposes live endpoints:
   - `GET /live/session/current`
   - `GET /live/timing/snapshot`
@@ -77,6 +81,15 @@ Legacy PDF endpoint example:
 
 ```bash
 curl -v "http://localhost:5050/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" -o telemetry.pdf
+curl -v "http://localhost:5050/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf
+```
+
+Legacy catalog endpoints (for dynamic app dropdowns):
+
+```bash
+curl -s "http://localhost:5050/legacy/catalog/years" | jq
+curl -s "http://localhost:5050/legacy/catalog/events?year=2024" | jq
+curl -s "http://localhost:5050/legacy/catalog/drivers?year=2024&trackName=Monaco&session=Q" | jq
 ```
 
 ## Expected Runtime Behavior
@@ -96,12 +109,23 @@ In `timing.rows[]` you can expect (best-effort based on active provider, default
 - `gap_to_leader` and `interval`
 - `lap.lap_duration`
 - `lap.sector_1`, `lap.sector_2`, `lap.sector_3`
+- `lap.i1_speed`, `lap.i2_speed`, `lap.st_speed`
 - `lap.microsectors_1`, `lap.microsectors_2`, `lap.microsectors_3`
 - `lap.microsectors_1_labels`, `lap.microsectors_2_labels`, `lap.microsectors_3_labels`
 - `tyre.compound`
 - `tyre.laps_on_current_tyre`
 - `is_in_pit`
 - driver/team metadata (`driver.*`)
+- `car.*` (speed, throttle, brake, rpm, gear, drs) when available from OpenF1
+- `location.*` (x, y, z) when available from OpenF1
+
+When `provider=openf1`, `timing` also includes:
+
+- `openf1_extras.weather` (latest weather sample)
+- `openf1_extras.race_control_messages` (recent messages)
+- `openf1_extras.team_radio_messages` (recent radio entries)
+- `openf1_extras.overtakes` (recent overtake entries)
+- `openf1_extras.counts` (quick counters per source)
 
 ## Quick Troubleshooting
 
