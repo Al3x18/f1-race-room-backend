@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import struct
 import threading
 import time
 import ssl
+import zlib
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -26,17 +28,30 @@ class UnofficialF1SignalRProvider:
     _default_topics = [
         "Heartbeat",
         "DriverList",
+        "DriverList.z",
         "SessionInfo",
+        "SessionInfo.z",
         "SessionStatus",
         "TrackStatus",
         "TimingData",
+        "TimingData.z",
+        "TimingDataF1",
+        "TimingDataF1.z",
         "TimingAppData",
+        "TimingAppData.z",
+        "TimingAppDataF1",
+        "TimingAppDataF1.z",
         "TimingStats",
+        "TimingStats.z",
+        "TimingStatsF1",
+        "TimingStatsF1.z",
         "RaceControlMessages",
         "LapCount",
         "SessionData",
+        "SessionData.z",
         "TopThree",
         "Position.z",
+        "CarData.z",
     ]
 
     def __init__(
@@ -70,6 +85,7 @@ class UnofficialF1SignalRProvider:
         self._driver_list: Dict[str, Dict[str, Any]] = {}
         self._timing_lines: Dict[str, Dict[str, Any]] = {}
         self._timing_app_lines: Dict[str, Dict[str, Any]] = {}
+        self._timing_stats_lines: Dict[str, Dict[str, Any]] = {}
 
     @staticmethod
     def _utc_now_iso() -> str:
@@ -92,6 +108,43 @@ class UnofficialF1SignalRProvider:
         return target
 
     @staticmethod
+    def _canonical_topic(topic: str) -> str:
+        normalized = topic.strip()
+        if normalized.endswith(".z"):
+            normalized = normalized[:-2]
+        aliases = {
+            "TimingDataF1": "TimingData",
+            "TimingAppDataF1": "TimingAppData",
+            "TimingStatsF1": "TimingStats",
+        }
+        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _decode_compressed_json(payload: str) -> Any:
+        raw = payload.strip()
+        if not raw:
+            return {}
+        raw = raw.replace("\n", "").replace("\r", "")
+        try:
+            packed = base64.b64decode(raw + "=" * (-len(raw) % 4), validate=False)
+        except Exception:
+            return payload
+
+        for wbits in (-zlib.MAX_WBITS, zlib.MAX_WBITS):
+            try:
+                inflated = zlib.decompress(packed, wbits)
+                return UnofficialF1SignalRProvider._decode_jsonish(inflated)
+            except Exception:
+                continue
+
+        # Some frames are gzip-wrapped zlib.
+        try:
+            inflated = zlib.decompress(packed, zlib.MAX_WBITS | 16)
+            return UnofficialF1SignalRProvider._decode_jsonish(inflated)
+        except Exception:
+            return payload
+
+    @staticmethod
     def _decode_jsonish(value: Any) -> Any:
         if isinstance(value, (dict, list)):
             return value
@@ -101,6 +154,8 @@ class UnofficialF1SignalRProvider:
             return value
 
         raw = value.strip()
+        if raw.endswith("\x1e"):
+            raw = raw.rstrip("\x1e")
         if not raw:
             return {}
 
@@ -121,12 +176,22 @@ class UnofficialF1SignalRProvider:
     def _extract_updates(self, msg: Any) -> List[Tuple[str, Any, str]]:
         updates: List[Tuple[str, Any, str]] = []
 
+        # signalrcore InvocationMessage carries feed args in .arguments
+        if hasattr(msg, "arguments") and isinstance(getattr(msg, "arguments", None), list):
+            msg = getattr(msg, "arguments")
+
         if hasattr(msg, "result") and isinstance(getattr(msg, "result", None), dict):
             for topic, payload in msg.result.items():
                 updates.append((str(topic), payload, ""))
             return updates
 
         if isinstance(msg, list):
+            # Common shape: [{"TimingData": "...", "TimingAppData": "..."}]
+            if len(msg) == 1 and isinstance(msg[0], dict):
+                for topic, payload in msg[0].items():
+                    updates.append((str(topic), payload, ""))
+                return updates
+
             if len(msg) >= 2 and isinstance(msg[0], str):
                 updates.append((msg[0], msg[1], msg[2] if len(msg) > 2 else ""))
                 return updates
@@ -134,7 +199,14 @@ class UnofficialF1SignalRProvider:
             for item in msg:
                 if isinstance(item, list) and len(item) >= 2 and isinstance(item[0], str):
                     updates.append((item[0], item[1], item[2] if len(item) > 2 else ""))
+                elif isinstance(item, dict):
+                    # Some feeds send list of dicts {topic: payload}
+                    for topic, payload in item.items():
+                        updates.append((str(topic), payload, ""))
             return updates
+
+        if isinstance(msg, dict) and isinstance(msg.get("arguments"), list):
+            return self._extract_updates(msg.get("arguments"))
 
         if isinstance(msg, dict) and isinstance(msg.get("M"), list):
             for inner in msg["M"]:
@@ -145,21 +217,56 @@ class UnofficialF1SignalRProvider:
         return updates
 
     def _message_has_data(self) -> bool:
-        return bool(self._timing_lines or self._driver_list or self._session_info)
+        return bool(
+            self._timing_lines
+            or self._timing_app_lines
+            or self._timing_stats_lines
+            or self._driver_list
+            or self._session_info
+            or self._session_data
+        )
+
+    @staticmethod
+    def _iter_lines(value: Any) -> List[Tuple[str, Dict[str, Any]]]:
+        rows: List[Tuple[str, Dict[str, Any]]] = []
+        if isinstance(value, dict):
+            for key, line in value.items():
+                if isinstance(line, dict):
+                    rows.append((str(key), line))
+            return rows
+        if isinstance(value, list):
+            for index, line in enumerate(value):
+                if not isinstance(line, dict):
+                    continue
+                key = (
+                    line.get("RacingNumber")
+                    or line.get("Driver")
+                    or line.get("Line")
+                    or line.get("Number")
+                    or index
+                )
+                rows.append((str(key), line))
+        return rows
 
     def _apply_update(self, topic: str, payload: Any) -> None:
+        canonical_topic = self._canonical_topic(topic)
         decoded = self._decode_jsonish(payload)
+        if isinstance(topic, str) and topic.endswith(".z") and isinstance(decoded, str):
+            decoded = self._decode_compressed_json(decoded)
 
-        if topic == "SessionInfo" and isinstance(decoded, dict):
+        if canonical_topic == "SessionInfo" and isinstance(decoded, dict):
             self._deep_merge(self._session_info, decoded)
             return
 
-        if topic == "SessionData" and isinstance(decoded, dict):
+        if canonical_topic == "SessionData" and isinstance(decoded, dict):
             self._deep_merge(self._session_data, decoded)
             return
 
-        if topic == "DriverList" and isinstance(decoded, dict):
-            for driver_number, driver_data in decoded.items():
+        if canonical_topic == "DriverList":
+            source = decoded
+            if isinstance(decoded, dict) and isinstance(decoded.get("Lines"), (dict, list)):
+                source = decoded.get("Lines")
+            for driver_number, driver_data in self._iter_lines(source):
                 if not isinstance(driver_data, dict):
                     continue
                 key = str(driver_number)
@@ -167,9 +274,9 @@ class UnofficialF1SignalRProvider:
                 self._driver_list[key] = self._deep_merge(current, driver_data)
             return
 
-        if topic == "TimingData" and isinstance(decoded, dict):
-            lines = decoded.get("Lines") if isinstance(decoded.get("Lines"), dict) else {}
-            for driver_number, line_data in lines.items():
+        if canonical_topic == "TimingData" and isinstance(decoded, dict):
+            lines = decoded.get("Lines")
+            for driver_number, line_data in self._iter_lines(lines):
                 if not isinstance(line_data, dict):
                     continue
                 key = str(driver_number)
@@ -177,15 +284,39 @@ class UnofficialF1SignalRProvider:
                 self._timing_lines[key] = self._deep_merge(current, line_data)
             return
 
-        if topic == "TimingAppData" and isinstance(decoded, dict):
-            lines = decoded.get("Lines") if isinstance(decoded.get("Lines"), dict) else {}
-            for driver_number, line_data in lines.items():
+        if canonical_topic == "TimingAppData" and isinstance(decoded, dict):
+            lines = decoded.get("Lines")
+            for driver_number, line_data in self._iter_lines(lines):
                 if not isinstance(line_data, dict):
                     continue
                 key = str(driver_number)
                 current = self._timing_app_lines.get(key, {})
                 self._timing_app_lines[key] = self._deep_merge(current, line_data)
             return
+
+        if canonical_topic == "TimingStats" and isinstance(decoded, dict):
+            lines = decoded.get("Lines")
+            for driver_number, line_data in self._iter_lines(lines):
+                if not isinstance(line_data, dict):
+                    continue
+                key = str(driver_number)
+                current = self._timing_stats_lines.get(key, {})
+                self._timing_stats_lines[key] = self._deep_merge(current, line_data)
+            return
+
+        # Fallback heuristic: some snapshots can arrive without explicit topic aliases.
+        if isinstance(decoded, dict) and "Lines" in decoded:
+            lines = decoded.get("Lines")
+            for driver_number, line_data in self._iter_lines(lines):
+                if not isinstance(line_data, dict):
+                    continue
+                key = str(driver_number)
+                if "Sectors" in line_data or "GapToLeader" in line_data or "Position" in line_data:
+                    current = self._timing_lines.get(key, {})
+                    self._timing_lines[key] = self._deep_merge(current, line_data)
+                elif "Stints" in line_data:
+                    current = self._timing_app_lines.get(key, {})
+                    self._timing_app_lines[key] = self._deep_merge(current, line_data)
 
     def _on_feed(self, msg: Any) -> None:
         updates = self._extract_updates(msg)
@@ -401,21 +532,36 @@ class UnofficialF1SignalRProvider:
 
     @staticmethod
     def _pick_sector(line: Dict[str, Any], index: int) -> Tuple[Optional[Any], List[Any]]:
-        sectors = line.get("Sectors") if isinstance(line.get("Sectors"), dict) else {}
+        sectors = line.get("Sectors")
         key = str(index)
-        sector = sectors.get(key, sectors.get(index, {}))
+        sector: Any = {}
+        if isinstance(sectors, dict):
+            sector = sectors.get(key, sectors.get(index, {}))
+        elif isinstance(sectors, list):
+            try:
+                sector = sectors[index]
+            except Exception:
+                sector = {}
         if not isinstance(sector, dict):
             return None, []
 
-        segments = sector.get("Segments") if isinstance(sector.get("Segments"), dict) else {}
-        ordered_keys = sorted(segments.keys(), key=lambda item: UnofficialF1SignalRProvider._to_int(item, 999))
-        micro = []
-        for segment_key in ordered_keys:
-            segment = segments.get(segment_key)
-            if isinstance(segment, dict):
-                micro.append(segment.get("Status"))
+        micro: List[Any] = []
+        segments = sector.get("Segments")
+        if isinstance(segments, dict):
+            ordered_keys = sorted(segments.keys(), key=lambda item: UnofficialF1SignalRProvider._to_int(item, 999))
+            for segment_key in ordered_keys:
+                segment = segments.get(segment_key)
+                if isinstance(segment, dict):
+                    micro.append(segment.get("Status"))
+        elif isinstance(segments, list):
+            for segment in segments:
+                if isinstance(segment, dict):
+                    micro.append(segment.get("Status"))
 
-        return sector.get("Value"), micro
+        value = sector.get("Value")
+        if value is None:
+            value = sector.get("PreviousValue")
+        return value, micro
 
     @staticmethod
     def _stints_as_list(line: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -429,6 +575,9 @@ class UnofficialF1SignalRProvider:
 
     def _build_session_payload(self) -> Dict[str, Any]:
         session_info = self._session_info
+        if not session_info and isinstance(self._session_data.get("Series"), dict):
+            # Some feeds expose session identity in SessionData.
+            session_info = self._session_data.get("Series", {})
         meeting = session_info.get("Meeting") if isinstance(session_info.get("Meeting"), dict) else {}
         country = meeting.get("Country") if isinstance(meeting.get("Country"), dict) else {}
 
@@ -447,12 +596,14 @@ class UnofficialF1SignalRProvider:
             set(self._driver_list.keys())
             | set(self._timing_lines.keys())
             | set(self._timing_app_lines.keys())
+            | set(self._timing_stats_lines.keys())
         )
 
         rows: List[Dict[str, Any]] = []
         for driver_id in driver_ids:
             timing_line = self._timing_lines.get(driver_id, {})
             app_line = self._timing_app_lines.get(driver_id, {})
+            stats_line = self._timing_stats_lines.get(driver_id, {})
             driver_line = self._driver_list.get(driver_id, {})
             if not isinstance(timing_line, dict):
                 timing_line = {}
@@ -460,6 +611,8 @@ class UnofficialF1SignalRProvider:
                 app_line = {}
             if not isinstance(driver_line, dict):
                 driver_line = {}
+            if not isinstance(stats_line, dict):
+                stats_line = {}
 
             sector_1, micro_1 = self._pick_sector(timing_line, 0)
             sector_2, micro_2 = self._pick_sector(timing_line, 1)
@@ -478,14 +631,18 @@ class UnofficialF1SignalRProvider:
                 {
                     "driver_number": self._to_int(driver_id, 0) or driver_id,
                     "driver": {
-                        "name_acronym": driver_line.get("Tla") or driver_line.get("RacingNumber"),
+                        "name_acronym": (
+                            driver_line.get("Tla")
+                            or driver_line.get("RacingNumber")
+                            or str(driver_id)
+                        ),
                         "broadcast_name": driver_line.get("BroadcastName"),
                         "full_name": driver_line.get("FullName"),
                         "team_name": driver_line.get("TeamName"),
                         "team_colour": driver_line.get("TeamColour"),
                     },
                     "position": timing_line.get("Position"),
-                    "gap_to_leader": timing_line.get("GapToLeader"),
+                    "gap_to_leader": timing_line.get("GapToLeader") or stats_line.get("GapToLeader"),
                     "interval": interval_value,
                     "is_in_pit": bool(timing_line.get("InPit")),
                     "lap": {
@@ -536,8 +693,6 @@ class UnofficialF1SignalRProvider:
         await self._ensure_ready()
         with self._state_lock:
             session = self._build_session_payload()
-            if not any(session.values()):
-                raise ProviderError("SignalR session metadata not available yet")
             return session
 
     async def fetch_timing_snapshot(self, session_key: Optional[int] = None) -> Dict[str, Any]:
