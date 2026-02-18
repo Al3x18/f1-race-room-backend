@@ -33,6 +33,10 @@ pip install -r requirements.txt
 ```env
 OPENF1_BASE_URL=https://api.openf1.org/v1
 OPENF1_API_KEY=
+OPENF1_USERNAME=
+OPENF1_PASSWORD=
+OPENF1_TOKEN_URL=https://api.openf1.org/token
+OPENF1_TOKEN_REFRESH_SEC=120
 LIVE_POLL_MS=800
 LIVE_HEARTBEAT_SEC=10
 ALLOWED_ORIGINS=*
@@ -51,9 +55,12 @@ You can start from `.env.example`.
 Quick provider switching:
 
 - `PROVIDER=signalr` for free testing without API key
-- `PROVIDER=openf1` only if you have an OpenF1 API key
+- `PROVIDER=openf1` with either:
+  - `OPENF1_API_KEY` (static bearer token), or
+  - `OPENF1_USERNAME` + `OPENF1_PASSWORD` (server auto-fetches token from `OPENF1_TOKEN_URL`)
 - `PROVIDER_ORDER` defines fallback chain order (left to right)
 - If you want no fallback, use `PROVIDER_ORDER=signalr`
+- OpenF1 access token is automatically refreshed before the 1-hour expiry window.
 
 ## Run Locally
 
@@ -108,6 +115,8 @@ In `timing.rows[]` you can expect (best-effort based on active provider, default
 - `position`
 - `gap_to_leader` and `interval`
 - `lap.lap_duration`
+- `lap.last_lap_duration` (latest completed lap time)
+- `lap.best_lap_duration` (driver best lap time in session)
 - `lap.sector_1`, `lap.sector_2`, `lap.sector_3`
 - `lap.i1_speed`, `lap.i2_speed`, `lap.st_speed`
 - `lap.microsectors_1`, `lap.microsectors_2`, `lap.microsectors_3`

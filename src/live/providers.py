@@ -50,31 +50,116 @@ class OpenF1Provider:
         self,
         base_url: str,
         api_key: str = "",
+        username: str = "",
+        password: str = "",
+        token_url: str = "https://api.openf1.org/token",
+        token_refresh_sec: int = 120,
+        verify_ssl: bool = True,
         timeout_sec: float = 8.0,
         client: Optional[httpx.AsyncClient] = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        self._username = username
+        self._password = password
+        self._token_url = token_url
+        self._token_refresh_sec = max(30, token_refresh_sec)
+        self._verify_ssl = verify_ssl
         self._timeout_sec = timeout_sec
         self._client = client
         self._last_session_key: Optional[int] = None
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._cache_ts: Dict[str, float] = {}
+        self._oauth_token: str = ""
+        self._oauth_token_expiry_monotonic: float = 0.0
+        self._oauth_lock = asyncio.Lock()
+
+    async def _get_bearer_token(self) -> str:
+        if self._api_key:
+            return self._api_key
+
+        if not self._username or not self._password:
+            return ""
+
+        now = time.monotonic()
+        if self._oauth_token and now < self._oauth_token_expiry_monotonic:
+            return self._oauth_token
+
+        async with self._oauth_lock:
+            now = time.monotonic()
+            if self._oauth_token and now < self._oauth_token_expiry_monotonic:
+                return self._oauth_token
+
+            client = self._client
+            owns_client = client is None
+            if client is None:
+                client = httpx.AsyncClient(timeout=self._timeout_sec, verify=self._verify_ssl)
+
+            try:
+                response = await client.post(
+                    self._token_url,
+                    data={
+                        "username": self._username,
+                        "password": self._password,
+                    },
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+                access_token = payload.get("access_token")
+                if not access_token:
+                    raise ProviderError("OpenF1 auth response missing access_token")
+
+                expires_in = self._safe_int(payload.get("expires_in"), default=3600)
+                valid_for = max(30, expires_in - self._token_refresh_sec)
+                self._oauth_token = str(access_token)
+                self._oauth_token_expiry_monotonic = time.monotonic() + valid_for
+                return self._oauth_token
+            except httpx.HTTPError as exc:
+                raise ProviderError(f"OpenF1 auth token request failed: {exc}") from exc
+            finally:
+                if owns_client:
+                    await client.aclose()
+
+    async def warmup(self) -> None:
+        """Eagerly fetch auth token on startup when using username/password auth."""
+        if self._api_key:
+            return
+        if not self._username or not self._password:
+            return
+        await self._get_bearer_token()
 
     async def _get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        headers = {}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-
         client = self._client
         owns_client = client is None
         if client is None:
-            client = httpx.AsyncClient(timeout=self._timeout_sec)
+            client = httpx.AsyncClient(timeout=self._timeout_sec, verify=self._verify_ssl)
 
         try:
-            response = await client.get(f"{self._base_url}/{endpoint.lstrip('/')}", params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+            url = f"{self._base_url}/{endpoint.lstrip('/')}"
+            for attempt in range(2):
+                headers = {}
+                token = await self._get_bearer_token()
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+
+                response = await client.get(url, params=params, headers=headers)
+                if (
+                    response.status_code == 401
+                    and attempt == 0
+                    and not self._api_key
+                    and self._username
+                    and self._password
+                ):
+                    # Token may be expired or revoked; force refresh and retry once.
+                    self._oauth_token = ""
+                    self._oauth_token_expiry_monotonic = 0.0
+                    continue
+
+                response.raise_for_status()
+                return response.json()
+
+            raise ProviderError(f"OpenF1 request failed for {endpoint}: unauthorized")
         except httpx.HTTPError as exc:
             raise ProviderError(f"OpenF1 request failed for {endpoint}: {exc}") from exc
         finally:
@@ -191,6 +276,46 @@ class OpenF1Provider:
                 latest[driver_number] = row
         return latest
 
+    @staticmethod
+    def _lap_time_seconds(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            result = float(value)
+            return result if result > 0 else None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+        if ":" in raw:
+            try:
+                minutes, seconds = raw.split(":", 1)
+                return (int(minutes) * 60.0) + float(seconds)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _best_lap_by_driver(self, laps: List[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+        best: Dict[int, Dict[str, Any]] = {}
+        for row in laps:
+            driver_number = self._driver_number(row.get("driver_number"))
+            if driver_number is None:
+                continue
+            duration = self._lap_time_seconds(row.get("lap_duration"))
+            if duration is None:
+                continue
+            current = best.get(driver_number)
+            if current is None:
+                best[driver_number] = row
+                continue
+            current_duration = self._lap_time_seconds(current.get("lap_duration"))
+            if current_duration is None or duration < current_duration:
+                best[driver_number] = row
+        return best
+
     def _calculate_laps_on_tyre(
         self,
         active_stint: Dict[str, Any],
@@ -301,6 +426,7 @@ class OpenF1Provider:
                 self._parse_dt(row.get("date_start")),
             ),
         )
+        best_laps_by_driver = self._best_lap_by_driver(laps)
         stints_by_driver = self._latest_by_driver(
             stints,
             sort_fn=lambda row: (
@@ -351,6 +477,7 @@ class OpenF1Provider:
             position = position_by_driver.get(driver_number, {})
             interval = intervals_by_driver.get(driver_number, {})
             latest_lap = laps_by_driver.get(driver_number, {})
+            best_lap = best_laps_by_driver.get(driver_number, {})
             active_stint = stints_by_driver.get(driver_number, {})
             latest_pit = pit_by_driver.get(driver_number, {})
             latest_car = car_by_driver.get(driver_number, {})
@@ -376,6 +503,10 @@ class OpenF1Provider:
                 "lap": {
                     "lap_number": latest_lap.get("lap_number"),
                     "lap_duration": latest_lap.get("lap_duration"),
+                    "last_lap_duration": latest_lap.get("lap_duration"),
+                    "best_lap_duration": best_lap.get("lap_duration"),
+                    "best_lap_number": best_lap.get("lap_number"),
+                    "best_lap_date_start": best_lap.get("date_start"),
                     "sector_1": latest_lap.get("duration_sector_1"),
                     "sector_2": latest_lap.get("duration_sector_2"),
                     "sector_3": latest_lap.get("duration_sector_3"),

@@ -626,6 +626,12 @@ class UnofficialF1SignalRProvider:
 
             stints = self._stints_as_list(app_line)
             current_stint = stints[-1] if stints else {}
+            last_lap_time = timing_line.get("LastLapTime") if isinstance(timing_line.get("LastLapTime"), dict) else {}
+            best_lap_time = timing_line.get("BestLapTime") if isinstance(timing_line.get("BestLapTime"), dict) else {}
+            if not best_lap_time and isinstance(stats_line.get("BestLapTime"), dict):
+                best_lap_time = stats_line.get("BestLapTime")
+            last_lap_duration = last_lap_time.get("Value")
+            best_lap_duration = best_lap_time.get("Value")
 
             rows.append(
                 {
@@ -647,9 +653,13 @@ class UnofficialF1SignalRProvider:
                     "is_in_pit": bool(timing_line.get("InPit")),
                     "lap": {
                         "lap_number": timing_line.get("NumberOfLaps"),
-                        "lap_duration": (
-                            timing_line.get("LastLapTime", {}).get("Value")
-                            if isinstance(timing_line.get("LastLapTime"), dict)
+                        "lap_duration": last_lap_duration,
+                        "last_lap_duration": last_lap_duration,
+                        "best_lap_duration": best_lap_duration,
+                        "best_lap_number": None,
+                        "best_lap_date_start": (
+                            best_lap_time.get("Utc")
+                            if isinstance(best_lap_time, dict)
                             else None
                         ),
                         "sector_1": sector_1,
@@ -662,11 +672,7 @@ class UnofficialF1SignalRProvider:
                         "microsectors_3": micro_3,
                         "microsectors_3_labels": [microsector_status_label(code) for code in micro_3],
                         "is_pit_out_lap": timing_line.get("PitOut"),
-                        "date_start": (
-                            timing_line.get("LastLapTime", {}).get("Utc")
-                            if isinstance(timing_line.get("LastLapTime"), dict)
-                            else None
-                        ),
+                        "date_start": last_lap_time.get("Utc"),
                     },
                     "tyre": {
                         "compound": current_stint.get("Compound"),

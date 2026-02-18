@@ -7,6 +7,10 @@ from typing import List
 class AppSettings:
     openf1_base_url: str = "https://api.openf1.org/v1"
     openf1_api_key: str = ""
+    openf1_username: str = ""
+    openf1_password: str = ""
+    openf1_token_url: str = "https://api.openf1.org/token"
+    openf1_token_refresh_sec: int = 120
     live_poll_ms: int = 800
     live_heartbeat_sec: int = 10
     allowed_origins: List[str] = None
@@ -42,6 +46,10 @@ class AppSettings:
         return cls(
             openf1_base_url=os.getenv("OPENF1_BASE_URL", "https://api.openf1.org/v1"),
             openf1_api_key=os.getenv("OPENF1_API_KEY", ""),
+            openf1_username=os.getenv("OPENF1_USERNAME", ""),
+            openf1_password=os.getenv("OPENF1_PASSWORD", ""),
+            openf1_token_url=os.getenv("OPENF1_TOKEN_URL", "https://api.openf1.org/token"),
+            openf1_token_refresh_sec=int(os.getenv("OPENF1_TOKEN_REFRESH_SEC", "120")),
             live_poll_ms=int(os.getenv("LIVE_POLL_MS", "800")),
             live_heartbeat_sec=int(os.getenv("LIVE_HEARTBEAT_SEC", "10")),
             allowed_origins=origins,

@@ -39,6 +39,11 @@ def _build_providers(settings: AppSettings):
     openf1_provider = OpenF1Provider(
         base_url=settings.openf1_base_url,
         api_key=settings.openf1_api_key,
+        username=settings.openf1_username,
+        password=settings.openf1_password,
+        token_url=settings.openf1_token_url,
+        token_refresh_sec=settings.openf1_token_refresh_sec,
+        verify_ssl=True,
     )
     signalr_provider = UnofficialF1SignalRProvider(
         connection_url=settings.signalr_connection_url,
@@ -58,7 +63,10 @@ def _build_providers(settings: AppSettings):
     resolved = []
     seen = set()
     for name in order:
-        if name == "openf1" and not settings.openf1_api_key:
+        if name == "openf1" and not (
+            settings.openf1_api_key
+            or (settings.openf1_username and settings.openf1_password)
+        ):
             continue
         provider = registry.get(name)
         if provider and name not in seen:
@@ -101,6 +109,14 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        for provider in providers:
+            warmup = getattr(provider, "warmup", None)
+            if callable(warmup):
+                try:
+                    await warmup()
+                except Exception:
+                    # Fallback providers are handled by LiveService polling logic.
+                    pass
         await live_service.start()
         await live_service.reload()
         yield

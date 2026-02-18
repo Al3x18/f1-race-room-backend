@@ -51,7 +51,11 @@ Stack:
 ## Environment Variables
 
 - `OPENF1_BASE_URL` (default `https://api.openf1.org/v1`)
-- `OPENF1_API_KEY` (optional)
+- `OPENF1_API_KEY` (optional static bearer token)
+- `OPENF1_USERNAME` (optional, used for auth flow if API key is not set)
+- `OPENF1_PASSWORD` (optional, used for auth flow if API key is not set)
+- `OPENF1_TOKEN_URL` (default `https://api.openf1.org/token`)
+- `OPENF1_TOKEN_REFRESH_SEC` (default `120`, refresh margin before expiry)
 - `LIVE_POLL_MS` (default `800`)
 - `LIVE_HEARTBEAT_SEC` (default `10`)
 - `ALLOWED_ORIGINS` (default `*`, comma-separated)
@@ -63,6 +67,12 @@ Stack:
 - `SIGNALR_NO_AUTH` (default `true`)
 - `SIGNALR_ACCESS_TOKEN` (optional, for authenticated SignalR usage)
 - `SIGNALR_VERIFY_SSL` (default `true`; set `false` only for local SSL troubleshooting)
+
+OpenF1 auth behavior:
+
+- If `OPENF1_API_KEY` is set, it is used directly as bearer token.
+- Otherwise, if `OPENF1_USERNAME` and `OPENF1_PASSWORD` are set, the server requests an access token from `OPENF1_TOKEN_URL`.
+- Access token is refreshed automatically before the nominal 1-hour expiration.
 
 ## API Reference
 
@@ -261,6 +271,10 @@ Each `timing.rows[]` item contains consolidated per-driver data:
   "lap": {
     "lap_number": 14,
     "lap_duration": 92.123,
+    "last_lap_duration": 92.123,
+    "best_lap_duration": 91.887,
+    "best_lap_number": 12,
+    "best_lap_date_start": "2026-02-18T12:16:01+00:00",
     "sector_1": 30.101,
     "sector_2": 31.222,
     "sector_3": 30.800,

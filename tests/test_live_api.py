@@ -57,7 +57,21 @@ def build_settings(heartbeat=1):
 def test_snapshot_non_empty_when_provider_responds():
     primary = SequenceProvider(
         session_payload={"session_key": 1001, "session_name": "Race"},
-        timing_sequence=[{"rows": [{"driver_number": 1, "position": 1}]}],
+        timing_sequence=[
+            {
+                "rows": [
+                    {
+                        "driver_number": 1,
+                        "position": 1,
+                        "lap": {
+                            "lap_duration": 91.456,
+                            "last_lap_duration": 91.456,
+                            "best_lap_duration": 90.999,
+                        },
+                    }
+                ]
+            }
+        ],
     )
     fallback = SequenceProvider(session_payload={}, timing_sequence=[{"rows": []}], name="fastf1")
 
@@ -70,6 +84,9 @@ def test_snapshot_non_empty_when_provider_responds():
         body = snapshot.json()
         assert body["provider"] == "openf1"
         assert body["timing"]["rows"]
+        lap = body["timing"]["rows"][0]["lap"]
+        assert lap["last_lap_duration"] == 91.456
+        assert lap["best_lap_duration"] == 90.999
 
 
 def test_sse_emits_update_on_version_change():
