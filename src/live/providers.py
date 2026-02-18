@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Protocol
 
 import fastf1 as ff1
@@ -124,6 +124,22 @@ class OpenF1Provider:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _safe_float(value: Any, default: Optional[float] = None) -> Optional[float]:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _recent_iso_utc(window_sec: int = 25) -> str:
+        return (datetime.now(timezone.utc) - timedelta(seconds=max(1, window_sec))).isoformat()
+
+    def _latest_row(self, rows: List[Dict[str, Any]], date_field: str = "date") -> Dict[str, Any]:
+        if not rows:
+            return {}
+        return max(rows, key=lambda row: self._parse_dt(row.get(date_field)))
+
     def _reset_session_cache_if_needed(self, session_key: Optional[int]) -> None:
         if session_key is None:
             return
@@ -239,14 +255,35 @@ class OpenF1Provider:
 
         self._reset_session_cache_if_needed(session_key)
         params = {"session_key": session_key} if session_key is not None else {"session_key": "latest"}
+        recent_params = dict(params)
+        recent_params["date>"] = self._recent_iso_utc(25)
 
-        drivers, positions, intervals, laps, stints, pit_events = await asyncio.gather(
+        (
+            drivers,
+            positions,
+            intervals,
+            laps,
+            stints,
+            pit_events,
+            car_data,
+            locations,
+            weather,
+            race_control,
+            team_radio,
+            overtakes,
+        ) = await asyncio.gather(
             self._get_cached("drivers", params=params, ttl_sec=1800, required=False),
             self._get_cached("position", params=params, ttl_sec=0.6, required=False),
             self._get_cached("intervals", params=params, ttl_sec=0.6, required=False),
             self._get_cached("laps", params=params, ttl_sec=1.5, required=False),
             self._get_cached("stints", params=params, ttl_sec=4.0, required=False),
             self._get_cached("pit", params=params, ttl_sec=1.5, required=False),
+            self._get_cached("car_data", params=recent_params, ttl_sec=0.7, required=False),
+            self._get_cached("location", params=recent_params, ttl_sec=0.8, required=False),
+            self._get_cached("weather", params=recent_params, ttl_sec=2.0, required=False),
+            self._get_cached("race_control", params=recent_params, ttl_sec=1.2, required=False),
+            self._get_cached("team_radio", params=recent_params, ttl_sec=1.2, required=False),
+            self._get_cached("overtakes", params=recent_params, ttl_sec=1.5, required=False),
         )
 
         position_by_driver = self._latest_by_driver(
@@ -285,6 +322,14 @@ class OpenF1Provider:
                 self._safe_int(row.get("meeting_key"), default=-1),
             ),
         )
+        car_by_driver = self._latest_by_driver(
+            car_data,
+            sort_fn=lambda row: self._parse_dt(row.get("date")),
+        )
+        location_by_driver = self._latest_by_driver(
+            locations,
+            sort_fn=lambda row: self._parse_dt(row.get("date")),
+        )
 
         if not any([drivers_by_driver, position_by_driver, intervals_by_driver, laps_by_driver]):
             raise ProviderError("OpenF1 returned empty live timing sources")
@@ -296,6 +341,8 @@ class OpenF1Provider:
             | set(laps_by_driver.keys())
             | set(stints_by_driver.keys())
             | set(pit_by_driver.keys())
+            | set(car_by_driver.keys())
+            | set(location_by_driver.keys())
         )
 
         normalized: List[Dict[str, Any]] = []
@@ -306,6 +353,8 @@ class OpenF1Provider:
             latest_lap = laps_by_driver.get(driver_number, {})
             active_stint = stints_by_driver.get(driver_number, {})
             latest_pit = pit_by_driver.get(driver_number, {})
+            latest_car = car_by_driver.get(driver_number, {})
+            latest_location = location_by_driver.get(driver_number, {})
 
             row = {
                 "driver_number": driver_number,
@@ -313,8 +362,12 @@ class OpenF1Provider:
                     "name_acronym": driver_meta.get("name_acronym"),
                     "broadcast_name": driver_meta.get("broadcast_name"),
                     "full_name": driver_meta.get("full_name"),
+                    "first_name": driver_meta.get("first_name"),
+                    "last_name": driver_meta.get("last_name"),
+                    "country_code": driver_meta.get("country_code"),
                     "team_name": driver_meta.get("team_name"),
                     "team_colour": driver_meta.get("team_colour"),
+                    "headshot_url": driver_meta.get("headshot_url"),
                 },
                 "position": position.get("position"),
                 "gap_to_leader": interval.get("gap_to_leader"),
@@ -326,6 +379,10 @@ class OpenF1Provider:
                     "sector_1": latest_lap.get("duration_sector_1"),
                     "sector_2": latest_lap.get("duration_sector_2"),
                     "sector_3": latest_lap.get("duration_sector_3"),
+                    "i1_speed": latest_lap.get("i1_speed"),
+                    "i2_speed": latest_lap.get("i2_speed"),
+                    "st_speed": latest_lap.get("st_speed"),
+                    "is_personal_best": latest_lap.get("is_personal_best"),
                     "microsectors_1": latest_lap.get("segments_sector_1") or [],
                     "microsectors_1_labels": [
                         microsector_status_label(code)
@@ -361,7 +418,28 @@ class OpenF1Provider:
                     "lane_duration": latest_pit.get("lane_duration"),
                     "stop_duration": latest_pit.get("stop_duration"),
                 },
-                "date": interval.get("date") or position.get("date") or latest_lap.get("date_start"),
+                "car": {
+                    "speed": latest_car.get("speed"),
+                    "throttle": latest_car.get("throttle"),
+                    "brake": latest_car.get("brake"),
+                    "rpm": latest_car.get("rpm"),
+                    "n_gear": latest_car.get("n_gear"),
+                    "drs": latest_car.get("drs"),
+                    "date": latest_car.get("date"),
+                },
+                "location": {
+                    "x": latest_location.get("x"),
+                    "y": latest_location.get("y"),
+                    "z": latest_location.get("z"),
+                    "date": latest_location.get("date"),
+                },
+                "date": (
+                    interval.get("date")
+                    or position.get("date")
+                    or latest_lap.get("date_start")
+                    or latest_car.get("date")
+                    or latest_location.get("date")
+                ),
             }
             normalized.append(row)
 
@@ -372,9 +450,45 @@ class OpenF1Provider:
             )
         )
 
+        latest_weather = self._latest_row(weather, date_field="date")
+        recent_race_control = sorted(
+            race_control,
+            key=lambda row: self._parse_dt(row.get("date")),
+            reverse=True,
+        )[:50]
+        recent_team_radio = sorted(
+            team_radio,
+            key=lambda row: self._parse_dt(row.get("date")),
+            reverse=True,
+        )[:30]
+        recent_overtakes = sorted(
+            overtakes,
+            key=lambda row: self._parse_dt(row.get("date")),
+            reverse=True,
+        )[:30]
+
         return {
             "session_key": session_key,
             "rows": normalized,
+            "openf1_extras": {
+                "weather": latest_weather or None,
+                "race_control_messages": recent_race_control,
+                "team_radio_messages": recent_team_radio,
+                "overtakes": recent_overtakes,
+                "counts": {
+                    "drivers": len(drivers_by_driver),
+                    "positions": len(position_by_driver),
+                    "intervals": len(intervals_by_driver),
+                    "laps": len(laps_by_driver),
+                    "stints": len(stints_by_driver),
+                    "pit_events": len(pit_by_driver),
+                    "car_data": len(car_by_driver),
+                    "locations": len(location_by_driver),
+                    "race_control_messages": len(recent_race_control),
+                    "team_radio_messages": len(recent_team_radio),
+                    "overtakes": len(recent_overtakes),
+                },
+            },
         }
 
 
