@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>F1 Race Room Backend</title>
-    <link rel="stylesheet" href="{{ request.url_for('static', path='css/style.css') }}?v=20260217-3">
+    <link rel="stylesheet" href="{{ request.url_for('static', path='css/style.css') }}?v=20260218-6">
 </head>
 <body>
     <main class="layout">
         <section class="hero">
             <p class="eyebrow">FastAPI Live Timing</p>
             <h1>F1 Race Room Backend</h1>
-            <p class="subtitle">API pronta per client app: snapshot, stream SSE, reload e endpoint legacy PDF.</p>
+            <p class="subtitle">API for app clients: live snapshot, SSE stream, reload, legacy telemetry PDF, and FastF1 catalog discovery.</p>
 
             <div class="badges">
                 <span class="badge">provider default: <strong>{{ provider }}</strong></span>
@@ -32,33 +32,45 @@
         <section class="panel panel-live">
             <h2>Live Endpoints</h2>
             <ul class="endpoints">
-                <li><span class="method get">GET</span><a href="/live/session/current" target="_blank" rel="noreferrer">/live/session/current</a><small>Sessione corrente in cache</small></li>
-                <li><span class="method get">GET</span><a href="/live/timing/snapshot" target="_blank" rel="noreferrer">/live/timing/snapshot</a><small>Snapshot completo live</small></li>
-                <li><span class="method get">GET</span><a href="/live/timing/stream" target="_blank" rel="noreferrer">/live/timing/stream</a><small>SSE update/heartbeat</small></li>
-                <li><span class="method post">POST</span><a href="/live/reload" target="_blank" rel="noreferrer">/live/reload</a><small>Forza un poll immediato</small></li>
+                <li><span class="method get">GET</span><a href="/live/session/current" target="_blank" rel="noreferrer">/live/session/current</a><small>Current session cached in memory</small></li>
+                <li><span class="method get">GET</span><a href="/live/timing/snapshot" target="_blank" rel="noreferrer">/live/timing/snapshot</a><small>Complete live snapshot</small></li>
+                <li><span class="method get">GET</span><a href="/live/timing/stream" target="_blank" rel="noreferrer">/live/timing/stream</a><small>SSE stream with update/heartbeat events</small></li>
+                <li><span class="method post">POST</span><a href="/live/reload" target="_blank" rel="noreferrer">/live/reload</a><small>Forces one immediate poll cycle</small></li>
+            </ul>
+        </section>
+
+        <section class="panel panel-catalog">
+            <h2>Legacy Catalog Flow</h2>
+            <ul class="endpoints">
+                <li><span class="method get">GET</span><a href="/legacy/catalog/years" target="_blank" rel="noreferrer">/legacy/catalog/years</a><small>Returns available years for FastF1 schedule data</small></li>
+                <li><span class="method get">GET</span><a href="/legacy/catalog/events?year=2024" target="_blank" rel="noreferrer">/legacy/catalog/events?year=2024</a><small>Returns events and sessions available for the selected year</small></li>
+                <li><span class="method get">GET</span><a href="/legacy/catalog/drivers?year=2024&trackName=Monaco&session=Q" target="_blank" rel="noreferrer">/legacy/catalog/drivers?year=2024&amp;trackName=Monaco&amp;session=Q</a><small>Returns drivers with available telemetry for the selected session</small></li>
+                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry?year=...&amp;trackName=...&amp;session=...&amp;driverName=...</a><small>Generate telemetry PDF using values selected from catalog endpoints</small></li>
+                <li><span class="method get">GET</span><a href="/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" target="_blank" rel="noreferrer">/get-telemetry-compare?year=...&amp;trackName=...&amp;session=...&amp;driverA=...&amp;driverB=...</a><small>Generate comparison PDF with overlaid charts for two selected drivers</small></li>
             </ul>
         </section>
 
         <section class="panel panel-legacy">
             <h2>Legacy Endpoints</h2>
             <ul class="endpoints">
-                <li><span class="method get">GET</span><a href="/status" target="_blank" rel="noreferrer">/status</a><small>Health sintetico backend</small></li>
-                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry</a><small>PDF telemetry, params richiesti: year, trackName, session, driverName</small></li>
+                <li><span class="method get">GET</span><a href="/status" target="_blank" rel="noreferrer">/status</a><small>Compact backend health/status</small></li>
+                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry</a><small>Legacy telemetry PDF endpoint (required params: year, trackName, session, driverName)</small></li>
+                <li><span class="method get">GET</span><a href="/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" target="_blank" rel="noreferrer">/get-telemetry-compare</a><small>Comparison PDF for two drivers (required params: year, trackName, session, driverA, driverB)</small></li>
             </ul>
         </section>
 
         <section class="panel panel-data two-cols">
             <div>
-                <h2>Dati Per Pilota</h2>
+                <h2>Per-Driver Data</h2>
                 <ul class="data-list">
-                    <li>Posizione, gap leader, interval</li>
-                    <li>Lap time, settori, microsettori</li>
-                    <li>Compound e laps su gomma corrente</li>
-                    <li>Stato pit e metadati pilota/team</li>
+                    <li>Position, gap-to-leader, interval</li>
+                    <li>Lap time, sectors, microsectors</li>
+                    <li>Tyre compound and laps on current tyre</li>
+                    <li>Pit status and driver/team metadata</li>
                 </ul>
             </div>
             <div>
-                <h2>Microsettori Labels</h2>
+                <h2>Microsector Labels</h2>
                 <ul class="data-list mono">
                     <li><code>0</code> -> <code>no_data</code></li>
                     <li><code>2048</code> -> <code>slower</code></li>
@@ -70,14 +82,44 @@
             </div>
         </section>
 
+        <section class="panel panel-compare-doc">
+            <h2>Telemetry Compare API Guide</h2>
+            <ol class="flow-list">
+                <li>Call <code>/legacy/catalog/years</code> and select the season.</li>
+                <li>Call <code>/legacy/catalog/events?year=...</code> and pick <code>event_name</code> + session code.</li>
+                <li>Call <code>/legacy/catalog/drivers?year=...&amp;trackName=...&amp;session=...</code> and pick two drivers.</li>
+                <li>Download compare PDF with <code>/get-telemetry-compare?year=...&amp;trackName=...&amp;session=...&amp;driverA=...&amp;driverB=...</code>.</li>
+            </ol>
+            <div class="cmd-grid compare-grid">
+                <pre><code>curl -v "http://localhost:5050/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf</code></pre>
+                <pre><code>200 OK
+content-type: application/pdf
+content-disposition: attachment; filename="VER_LEC_Q_Monaco_2024_comparison.pdf"</code></pre>
+                <pre><code>400 (missing params)
+{"error":"Missing required parameters: year, trackName, session, driverA, driverB"}</code></pre>
+                <pre><code>400 (invalid data)
+{"detail":"Data not found. Could not process comparison telemetry data. Please check the provided parameters."}</code></pre>
+                <pre><code>404
+{"detail":"File not found: ..."}</code></pre>
+                <pre><code>500
+{"detail":"An error occurred: ..."}</code></pre>
+            </div>
+            <p class="panel-note">Compare PDF overlays speed/throttle/brake for two drivers. Corner numbers and corner-speed labels are shown only when FastF1 corner metadata is available.</p>
+        </section>
+
         <section class="panel panel-commands">
-            <h2>Comandi Rapidi</h2>
+            <h2>Quick Commands</h2>
             <div class="cmd-grid">
                 <pre><code>curl -s /status | jq</code></pre>
                 <pre><code>curl -s /live/session/current | jq</code></pre>
                 <pre><code>curl -s /live/timing/snapshot | jq</code></pre>
                 <pre><code>curl -N /live/timing/stream</code></pre>
                 <pre><code>curl -s -X POST /live/reload | jq</code></pre>
+                <pre><code>curl -s "/legacy/catalog/years" | jq</code></pre>
+                <pre><code>curl -s "/legacy/catalog/events?year=2024" | jq</code></pre>
+                <pre><code>curl -s "/legacy/catalog/drivers?year=2024&trackName=Monaco&session=Q" | jq</code></pre>
+                <pre><code>curl -v "/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" -o telemetry.pdf</code></pre>
+                <pre><code>curl -v "/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf</code></pre>
             </div>
         </section>
     </main>

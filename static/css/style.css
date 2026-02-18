@@ -173,8 +173,16 @@ h1 {
     grid-column: span 6;
 }
 
+.panel-catalog {
+    grid-column: span 6;
+}
+
 .panel-data {
     grid-column: span 6;
+}
+
+.panel-compare-doc {
+    grid-column: 1 / -1;
 }
 
 .panel-commands {
@@ -314,6 +322,28 @@ a:hover {
     font-size: 0.86rem;
 }
 
+.flow-list {
+    margin: 0 0 12px;
+    padding-left: 20px;
+    color: #2b435f;
+    display: grid;
+    gap: 7px;
+}
+
+.flow-list li {
+    line-height: 1.35;
+}
+
+.compare-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.panel-note {
+    margin: 12px 0 0;
+    font-size: 0.9rem;
+    color: #4d6580;
+}
+
 code {
     font-family: var(--mono);
 }
@@ -348,14 +378,17 @@ pre code {
     .hero,
     .panel-status,
     .panel-live,
+    .panel-catalog,
     .panel-legacy,
     .panel-data,
+    .panel-compare-doc,
     .panel-commands {
         grid-column: span 2;
     }
 
     .panel-status,
     .panel-live,
+    .panel-catalog,
     .panel-legacy,
     .panel-data {
         grid-column: span 1;
@@ -376,8 +409,10 @@ pre code {
     .hero,
     .panel-status,
     .panel-live,
+    .panel-catalog,
     .panel-legacy,
     .panel-data,
+    .panel-compare-doc,
     .panel-commands {
         grid-column: 1;
     }
