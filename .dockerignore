@@ -1,0 +1,17 @@
+.git
+.gitignore
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+venv
+.venv
+
+custom_cache
+telemetry_files
+
+.vscode
+.idea
