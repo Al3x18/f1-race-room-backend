@@ -22,6 +22,7 @@ from src.live import (
     SSEBroadcaster,
     UnofficialF1SignalRProvider,
 )
+from src.legacy_catalog import LegacyCatalogService
 from src.send_telemetry_file import SendTelemetryFile
 from src.telemetry import Telemetry, TelemetryError
 
@@ -74,6 +75,7 @@ def create_app(
     settings: Optional[AppSettings] = None,
     primary_provider=None,
     fallback_provider=None,
+    legacy_catalog_service: Optional[LegacyCatalogService] = None,
 ) -> FastAPI:
     app_settings = settings or AppSettings.from_env()
     aggregator = LiveAggregator()
@@ -122,6 +124,7 @@ def create_app(
     server.state.aggregator = aggregator
     server.state.live_service = live_service
     server.state.sse_broadcaster = sse_broadcaster
+    server.state.legacy_catalog_service = legacy_catalog_service or LegacyCatalogService()
 
     @server.get("/")
     async def index(request: Request):
@@ -189,6 +192,115 @@ def create_app(
             ) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"An error occurred: {exc}") from exc
+
+    @server.get("/get-telemetry-compare")
+    async def get_telemetry_compare(
+        year: Optional[int] = Query(default=None),
+        track_name: Optional[str] = Query(default=None, alias="trackName"),
+        session: Optional[str] = Query(default=None),
+        driver_a: Optional[str] = Query(default=None, alias="driverA"),
+        driver_b: Optional[str] = Query(default=None, alias="driverB"),
+    ):
+        if year is None or not track_name or not session or not driver_a or not driver_b:
+            return JSONResponse(
+                {
+                    "error": (
+                        "Missing required parameters: year, trackName, session, driverA, driverB"
+                    )
+                },
+                status_code=400,
+            )
+
+        telemetry = Telemetry(
+            year=year,
+            track_name=track_name,
+            session=session,
+            driver_name=driver_a,
+        )
+        send_manager = SendTelemetryFile()
+
+        try:
+            file_path = await asyncio.to_thread(
+                telemetry.get_comparison_telemetry_pdf,
+                driver_a,
+                driver_b,
+            )
+            response = send_manager.send_file_from_path(file_path=file_path)
+            response.background = BackgroundTask(send_manager.delete_file, file_path)
+            return response
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TelemetryError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Data not found. Could not process comparison telemetry data. "
+                    "Please check the provided parameters."
+                ),
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"An error occurred: {exc}") from exc
+
+    @server.get("/legacy/catalog/events")
+    async def legacy_catalog_events(
+        year: Optional[int] = Query(default=None),
+    ):
+        if year is None:
+            raise HTTPException(status_code=400, detail="Missing required parameter: year")
+
+        try:
+            events = await asyncio.to_thread(
+                server.state.legacy_catalog_service.get_events,
+                year,
+            )
+            return {
+                "year": year,
+                "events": events,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not load events for year {year}: {exc}") from exc
+
+    @server.get("/legacy/catalog/years")
+    async def legacy_catalog_years():
+        try:
+            years = await asyncio.to_thread(server.state.legacy_catalog_service.get_years)
+            return {"years": years}
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Could not load available years: {exc}") from exc
+
+    @server.get("/legacy/catalog/drivers")
+    async def legacy_catalog_drivers(
+        year: Optional[int] = Query(default=None),
+        track_name: Optional[str] = Query(default=None, alias="trackName"),
+        session: Optional[str] = Query(default=None),
+    ):
+        if year is None or not track_name or not session:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing required parameters: year, trackName, session",
+            )
+
+        try:
+            drivers = await asyncio.to_thread(
+                server.state.legacy_catalog_service.get_drivers,
+                year,
+                track_name,
+                session,
+            )
+            return {
+                "year": year,
+                "track_name": track_name,
+                "session": session,
+                "drivers": drivers,
+            }
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not load driver catalog. "
+                    f"Please verify year/trackName/session values. Details: {exc}"
+                ),
+            ) from exc
 
     @server.get("/live/session/current")
     async def live_session_current():
