@@ -1,30 +1,30 @@
 # F1 Race Room Backend
 
-Backend Python con FastAPI per telemetry PDF (retrocompatibile) e live timing F1 pronto per integrazione Flutter.
+Python FastAPI backend for F1 PDF telemetry (legacy-compatible) and live timing, ready for app integration.
 
-## Cosa fa
+## What It Does
 
-- Mantiene endpoint legacy già usati dal client:
+- Keeps legacy endpoints used by the existing client:
   - `GET /status`
   - `GET /get-telemetry`
-- Espone endpoint live:
+- Exposes live endpoints:
   - `GET /live/session/current`
   - `GET /live/timing/snapshot`
   - `GET /live/timing/stream` (SSE)
   - `POST /live/reload`
-- Usa provider architecture con fallback automatico:
-  - `UnofficialF1SignalRProvider` (primario consigliato per test senza API key)
-  - `OpenF1Provider` (opzionale, solo con API key)
+- Uses provider architecture with fallback support:
+  - `UnofficialF1SignalRProvider` (default for free live testing)
+  - `OpenF1Provider` (optional, API key required for live)
 
 ## Setup
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Variabili ambiente
+## Environment Variables
 
 ```env
 OPENF1_BASE_URL=https://api.openf1.org/v1
@@ -42,28 +42,28 @@ SIGNALR_ACCESS_TOKEN=
 SIGNALR_VERIFY_SSL=true
 ```
 
-Puoi partire da `.env.example`.
+You can start from `.env.example`.
 
-Switch rapido provider:
+Quick provider switching:
 
-- `PROVIDER=signalr` per test senza API key
-- `PROVIDER=openf1` solo se hai API key
-- `PROVIDER_ORDER` definisce la chain di fallback (ordine sinistra -> destra)
-- Se non vuoi fallback, usa `PROVIDER_ORDER=signalr`
+- `PROVIDER=signalr` for free testing without API key
+- `PROVIDER=openf1` only if you have an OpenF1 API key
+- `PROVIDER_ORDER` defines fallback chain order (left to right)
+- If you want no fallback, use `PROVIDER_ORDER=signalr`
 
-## Run locale
+## Run Locally
 
 ```bash
 uvicorn src.server:server --host 0.0.0.0 --port 5050 --env-file .env
 ```
 
-## Run con Docker
+## Run with Docker
 
 ```bash
 docker compose up --build
 ```
 
-## Esempi curl
+## cURL Examples
 
 ```bash
 curl -s http://localhost:5050/status | jq
@@ -73,27 +73,27 @@ curl -N http://localhost:5050/live/timing/stream
 curl -s -X POST http://localhost:5050/live/reload | jq
 ```
 
-Endpoint legacy PDF:
+Legacy PDF endpoint example:
 
 ```bash
 curl -v "http://localhost:5050/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" -o telemetry.pdf
 ```
 
-## Stato e comportamento atteso
+## Expected Runtime Behavior
 
-- Se il provider live è raggiungibile, `/status` ritorna `online`.
-- Se il provider fallisce, `/status` passa a `degraded`.
-- Lo stream SSE invia:
-  - `event: update` solo quando cambia `version`
-  - `event: heartbeat` ogni `LIVE_HEARTBEAT_SEC` se non ci sono cambi
-- In sessioni non attive `timing.rows` può essere vuoto: è normale.
+- If live provider is healthy, `/status` returns `online`.
+- If provider fails, `/status` becomes `degraded`.
+- SSE stream emits:
+  - `event: update` only when `version` changes
+  - `event: heartbeat` every `LIVE_HEARTBEAT_SEC` when there are no changes
+- During inactive sessions, `timing.rows` may be empty.
 
-## Dati live disponibili per pilota
+## Live Driver Data Available
 
-Nel payload `timing.rows[]` trovi (best-effort in base al provider attivo, default SignalR feed):
+In `timing.rows[]` you can expect (best-effort based on active provider, default SignalR feed):
 
 - `position`
-- `gap_to_leader` e `interval`
+- `gap_to_leader` and `interval`
 - `lap.lap_duration`
 - `lap.sector_1`, `lap.sector_2`, `lap.sector_3`
 - `lap.microsectors_1`, `lap.microsectors_2`, `lap.microsectors_3`
@@ -101,19 +101,19 @@ Nel payload `timing.rows[]` trovi (best-effort in base al provider attivo, defau
 - `tyre.compound`
 - `tyre.laps_on_current_tyre`
 - `is_in_pit`
-- metadati pilota/team (`driver.*`)
+- driver/team metadata (`driver.*`)
 
-## Troubleshooting rapido
+## Quick Troubleshooting
 
-- Errore SSL (`CERTIFICATE_VERIFY_FAILED`) in locale:
-  - imposta `SIGNALR_VERIFY_SSL=false` in `.env` (solo sviluppo locale)
-- `status=degraded` con `SignalR connected but no timing data received yet`:
-  - feed agganciato ma nessun dato utile ancora disponibile per la sessione
-- In produzione:
-  - mantieni `SIGNALR_VERIFY_SSL=true`
+- Local SSL error (`CERTIFICATE_VERIFY_FAILED`):
+  - set `SIGNALR_VERIFY_SSL=false` in `.env` (local dev only)
+- `status=degraded` with `SignalR connected but no timing data received yet`:
+  - feed is connected but no useful live payload is available yet
+- In production:
+  - keep `SIGNALR_VERIFY_SSL=true`
 
-## Documentazione tecnica
+## Technical Documentation
 
-Dettagli architetturali, payload e flusso integrazione Flutter:
+Architecture details, payload notes, and integration flow:
 
 - [`docs/TECHNICAL.md`](docs/TECHNICAL.md)
