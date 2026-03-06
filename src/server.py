@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.live import (
     AppSettings,
@@ -123,6 +124,7 @@ def create_app(
         await live_service.stop()
 
     server = FastAPI(title="F1 Race Room Backend", lifespan=lifespan)
+    server.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     base_dir = Path(__file__).resolve().parent.parent
     templates = Jinja2Templates(directory=str(base_dir / "templates"))

@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Tuple
 
 import fastf1 as ff1
 
+from src.fastf1_cache import fastf1_cache_guard
+
 
 def _is_missing(value: Any) -> bool:
     if value is None:
@@ -78,7 +80,8 @@ class LegacyCatalogService:
         if cached is not None:
             return cached
 
-        schedule = ff1.get_event_schedule(year)
+        with fastf1_cache_guard():
+            schedule = ff1.get_event_schedule(year)
         if schedule is None or schedule.empty:
             return []
 
@@ -120,7 +123,8 @@ class LegacyCatalogService:
         years: List[int] = []
         for year in range(start_year, current_year + 1):
             try:
-                schedule = ff1.get_event_schedule(year)
+                with fastf1_cache_guard():
+                    schedule = ff1.get_event_schedule(year)
             except Exception:
                 continue
             if schedule is not None and not schedule.empty:
@@ -133,8 +137,9 @@ class LegacyCatalogService:
         if cached is not None:
             return cached
 
-        loaded = ff1.get_session(year, track_name, session)
-        loaded.load(telemetry=False, weather=False, messages=False)
+        with fastf1_cache_guard():
+            loaded = ff1.get_session(year, track_name, session)
+            loaded.load(telemetry=False, weather=False, messages=False)
 
         from_laps = set()
         laps = getattr(loaded, "laps", None)

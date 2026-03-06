@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Protocol
 import fastf1 as ff1
 import httpx
 
+from src.fastf1_cache import disable_fastf1_cache, fastf1_cache_guard
+
 
 class ProviderError(RuntimeError):
     pass
@@ -627,13 +629,14 @@ class FastF1Provider:
     name = "fastf1"
 
     def __init__(self) -> None:
-        ff1.Cache.set_disabled()
+        disable_fastf1_cache()
 
     async def fetch_current_session(self) -> Dict[str, Any]:
         year = datetime.now(timezone.utc).year
 
         try:
-            schedule = ff1.get_event_schedule(year)
+            with fastf1_cache_guard():
+                schedule = ff1.get_event_schedule(year)
             if schedule is None or schedule.empty:
                 raise ProviderError("FastF1 returned an empty event schedule")
 

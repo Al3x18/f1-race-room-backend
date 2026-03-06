@@ -1,17 +1,11 @@
-import os
-
 import fastf1 as ff1
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 
+from src.fastf1_cache import fastf1_cache_guard
+
 matplotlib.use("Agg")
-
-cache_directory = "./custom_cache"
-os.makedirs(cache_directory, exist_ok=True)
-
-ff1.Cache.enable_cache(cache_directory)
-ff1.Cache.set_disabled()
 
 
 class TelemetryError(RuntimeError):
@@ -27,13 +21,12 @@ class Telemetry:
 
     def load_session_data(self):
         try:
-            loaded_session = ff1.get_session(self.year, self.track_name, self.session)
-            loaded_session.load()
+            with fastf1_cache_guard():
+                loaded_session = ff1.get_session(self.year, self.track_name, self.session)
+                loaded_session.load()
             return loaded_session
         except Exception as exc:
             raise TelemetryError(f"Error loading session data: {exc}") from exc
-        finally:
-            ff1.Cache.clear_cache(cache_dir=cache_directory)
 
     def get_fl_telemetry(self) -> str:
         session = self.load_session_data()
