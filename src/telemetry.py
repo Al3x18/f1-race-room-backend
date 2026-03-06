@@ -477,19 +477,19 @@ class Telemetry:
             lap_time_delta = getattr(lap_b, "LapTime", None) - getattr(lap_a, "LapTime", None)
             delta_total = self._format_lap_time(lap_time_delta)
 
-            figure = plt.figure(figsize=(16, 13.0), facecolor="#0f1720")
+            figure = plt.figure(figsize=(16, 14.4), facecolor="#0f1720")
             grid = figure.add_gridspec(
                 5,
                 1,
-                height_ratios=[1.55, 2.05, 1.2, 1.35, 1.35],
-                hspace=0.20,
+                height_ratios=[2.15, 2.05, 1.2, 1.35, 1.35],
+                hspace=0.22,
             )
 
             header_grid = grid[0, 0].subgridspec(
                 2,
                 4,
-                height_ratios=[0.9, 1.15],
-                hspace=0.38,
+                height_ratios=[1.35, 1.0],
+                hspace=0.52,
                 wspace=0.28,
             )
             ax_header = figure.add_subplot(header_grid[0, :])
@@ -511,9 +511,9 @@ class Telemetry:
             ax_header.axis("off")
             ax_header.text(
                 0.01,
-                0.88,
+                0.97,
                 "F1 Telemetry Comparison",
-                fontsize=24,
+                fontsize=23,
                 fontweight="bold",
                 color="#f5f8ff",
                 ha="left",
@@ -521,7 +521,7 @@ class Telemetry:
             )
             ax_header.text(
                 0.01,
-                0.48,
+                0.42,
                 f"{self.track_name} {self.year} {self.session} | {driver_a} vs {driver_b}",
                 fontsize=12,
                 color="#b8c6d8",
@@ -530,7 +530,7 @@ class Telemetry:
             )
             ax_header.text(
                 0.01,
-                0.14,
+                0.12,
                 f"{driver_a}: {lap_time_a}    {driver_b}: {lap_time_b}    gap: {delta_total}",
                 fontsize=10.5,
                 color="#9bb0c7",
