@@ -1,3 +1,5 @@
+import os
+
 import fastf1 as ff1
 import matplotlib
 import matplotlib.pyplot as plt
