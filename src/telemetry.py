@@ -231,6 +231,37 @@ class Telemetry:
             spine.set_color("#31475d")
 
     @staticmethod
+    def _draw_stat_card(axis, label, value, edge_color):
+        axis.axis("off")
+        axis.text(
+            0.03,
+            0.80,
+            label,
+            transform=axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            color="#d8e5f6",
+        )
+        axis.text(
+            0.03,
+            0.18,
+            value,
+            transform=axis.transAxes,
+            ha="left",
+            va="bottom",
+            fontsize=14,
+            fontweight="bold",
+            color="#f8fbff",
+            bbox={
+                "boxstyle": "round,pad=0.42",
+                "fc": "#172435",
+                "ec": edge_color,
+                "lw": 1.1,
+            },
+        )
+
+    @staticmethod
     def _calculate_delta(lap_a, lap_b, telemetry_a, telemetry_b):
         try:
             delta_time, ref_tel, compare_tel = ff1_utils.delta_time(lap_a, lap_b)
@@ -443,17 +474,29 @@ class Telemetry:
 
             lap_time_a = self._format_lap_time(getattr(lap_a, "LapTime", None))
             lap_time_b = self._format_lap_time(getattr(lap_b, "LapTime", None))
-            delta_total = self._format_lap_time(getattr(lap_b, "LapTime", None) - getattr(lap_a, "LapTime", None))
+            lap_time_delta = getattr(lap_b, "LapTime", None) - getattr(lap_a, "LapTime", None)
+            delta_total = self._format_lap_time(lap_time_delta)
 
-            figure = plt.figure(figsize=(16, 12.4), facecolor="#0f1720")
+            figure = plt.figure(figsize=(16, 13.0), facecolor="#0f1720")
             grid = figure.add_gridspec(
                 5,
                 1,
-                height_ratios=[1.0, 2.05, 1.15, 1.35, 1.35],
-                hspace=0.22,
+                height_ratios=[1.55, 2.05, 1.2, 1.35, 1.35],
+                hspace=0.20,
             )
 
-            ax_header = figure.add_subplot(grid[0, 0])
+            header_grid = grid[0, 0].subgridspec(
+                2,
+                4,
+                height_ratios=[0.9, 1.15],
+                hspace=0.38,
+                wspace=0.28,
+            )
+            ax_header = figure.add_subplot(header_grid[0, :])
+            ax_card_1 = figure.add_subplot(header_grid[1, 0])
+            ax_card_2 = figure.add_subplot(header_grid[1, 1])
+            ax_card_3 = figure.add_subplot(header_grid[1, 2])
+            ax_card_4 = figure.add_subplot(header_grid[1, 3])
             ax_speed = figure.add_subplot(grid[1, 0])
             ax_delta = figure.add_subplot(grid[2, 0], sharex=ax_speed)
             ax_throttle = figure.add_subplot(grid[3, 0], sharex=ax_speed)
@@ -468,55 +511,62 @@ class Telemetry:
             ax_header.axis("off")
             ax_header.text(
                 0.01,
-                0.78,
+                0.88,
                 "F1 Telemetry Comparison",
-                fontsize=21,
+                fontsize=24,
                 fontweight="bold",
                 color="#f5f8ff",
+                ha="left",
+                va="top",
             )
             ax_header.text(
                 0.01,
-                0.43,
+                0.48,
                 f"{self.track_name} {self.year} {self.session} | {driver_a} vs {driver_b}",
-                fontsize=11.5,
+                fontsize=12,
                 color="#b8c6d8",
+                ha="left",
+                va="center",
             )
             ax_header.text(
                 0.01,
-                0.20,
-                f"{driver_a}: {lap_time_a}   {driver_b}: {lap_time_b}   gap: {delta_total}",
-                fontsize=10,
+                0.14,
+                f"{driver_a}: {lap_time_a}    {driver_b}: {lap_time_b}    gap: {delta_total}",
+                fontsize=10.5,
                 color="#9bb0c7",
+                ha="left",
+                va="center",
             )
-            header_boxes = [
-                (0.01, 0.74, f"{driver_a} top speed", self._metric(speed_a, lambda s: s.max(), suffix=" km/h"), color_a),
-                (0.24, 0.74, f"{driver_b} top speed", self._metric(speed_b, lambda s: s.max(), suffix=" km/h"), color_b),
-                (0.47, 0.74, f"{driver_a} avg speed", self._metric(speed_a, lambda s: s.mean(), suffix=" km/h"), color_a),
-                (0.70, 0.74, f"{driver_b} avg speed", self._metric(speed_b, lambda s: s.mean(), suffix=" km/h"), color_b),
-            ]
-            for x_pos, y_pos, label, value, edge_color in header_boxes:
-                ax_header.text(
-                    x_pos,
-                    y_pos,
-                    f"{label}\n{value}",
-                    transform=ax_header.transAxes,
-                    ha="left",
-                    va="top",
-                    fontsize=9,
-                    color="#f2f7ff",
-                    bbox={
-                        "boxstyle": "round,pad=0.35",
-                        "fc": "#1c2a3a",
-                        "ec": edge_color,
-                        "lw": 1.0,
-                    },
-                )
+            self._draw_stat_card(
+                ax_card_1,
+                f"{driver_a} top speed",
+                self._metric(speed_a, lambda s: s.max(), suffix=" km/h"),
+                color_a,
+            )
+            self._draw_stat_card(
+                ax_card_2,
+                f"{driver_b} top speed",
+                self._metric(speed_b, lambda s: s.max(), suffix=" km/h"),
+                color_b,
+            )
+            self._draw_stat_card(
+                ax_card_3,
+                f"{driver_a} avg speed",
+                self._metric(speed_a, lambda s: s.mean(), suffix=" km/h"),
+                color_a,
+            )
+            self._draw_stat_card(
+                ax_card_4,
+                f"{driver_b} avg speed",
+                self._metric(speed_b, lambda s: s.mean(), suffix=" km/h"),
+                color_b,
+            )
 
             if speed_a is not None:
                 ax_speed.plot(distance_a, speed_a, color=color_a, linewidth=2.0, label=f"{driver_a} speed")
             if speed_b is not None:
                 ax_speed.plot(distance_b, speed_b, color=color_b, linewidth=2.0, label=f"{driver_b} speed")
-            ax_speed.set_title("Speed Overlay", color="#eff5ff", fontsize=12, pad=10)
+            ax_speed.set_title("Speed Overlay", color="#eff5ff", fontsize=12, pad=14)
             ax_speed.set_ylabel("km/h", color="#c8d5e5")
             ax_speed.grid(color="#203144", alpha=0.5, linewidth=0.7)
             ax_speed.legend(loc="upper right", frameon=False, labelcolor="#d8e5f6")
@@ -528,14 +578,14 @@ class Telemetry:
                 negative = np.where(delta_time < 0.0, delta_time, np.nan)
                 ax_delta.fill_between(distance_a, 0.0, positive, color=color_a, alpha=0.18)
                 ax_delta.fill_between(distance_a, 0.0, negative, color=color_b, alpha=0.18)
-                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=8)
+                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=14)
                 ax_delta.set_ylabel("sec", color="#c8d5e5")
                 ax_delta.grid(color="#203144", alpha=0.5, linewidth=0.7)
                 ax_delta.text(0.01, 0.90, f"+ = {driver_b} slower vs {driver_a}", transform=ax_delta.transAxes, color=color_a, fontsize=8)
                 ax_delta.text(0.01, 0.78, f"- = {driver_b} ahead of {driver_a}", transform=ax_delta.transAxes, color=color_b, fontsize=8)
             else:
                 ax_delta.text(0.5, 0.5, "Delta time unavailable", color="#9bb0c7", fontsize=10, ha="center", va="center")
-                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=8)
+                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=14)
                 ax_delta.set_ylabel("sec", color="#c8d5e5")
 
             if throttle_a is not None:
@@ -554,7 +604,7 @@ class Telemetry:
                     linewidth=1.8,
                     label=f"{driver_b} throttle",
                 )
-            ax_throttle.set_title("Throttle Overlay", color="#eff5ff", fontsize=12, pad=8)
+            ax_throttle.set_title("Throttle Overlay", color="#eff5ff", fontsize=12, pad=14)
             ax_throttle.set_ylabel("%", color="#c8d5e5")
             ax_throttle.set_ylim(-2, 104)
             ax_throttle.grid(color="#203144", alpha=0.5, linewidth=0.7)
@@ -576,12 +626,15 @@ class Telemetry:
                     linewidth=1.7,
                     label=f"{driver_b} brake",
                 )
-            ax_brake.set_title("Brake Overlay", color="#eff5ff", fontsize=12, pad=8)
+            ax_brake.set_title("Brake Overlay", color="#eff5ff", fontsize=12, pad=14)
             ax_brake.set_xlabel("Distance (m)", color="#c8d5e5")
             ax_brake.set_ylabel("%", color="#c8d5e5")
             ax_brake.set_ylim(-2, 104)
             ax_brake.grid(color="#203144", alpha=0.5, linewidth=0.7)
             ax_brake.legend(loc="upper right", frameon=False, labelcolor="#d8e5f6")
+
+            for axis in (ax_speed, ax_delta, ax_throttle):
+                axis.tick_params(labelbottom=False)
 
             corner_ticks, corner_labels = self._extract_corner_markers(
                 session=session,
@@ -589,12 +642,7 @@ class Telemetry:
                 distance=distance_a,
             )
             if corner_ticks:
-                self._add_corner_axis(ax_speed, corner_ticks, corner_labels, offset=20)
-                self._add_corner_axis(ax_delta, corner_ticks, corner_labels, offset=20)
-                self._add_corner_axis(ax_throttle, corner_ticks, corner_labels, offset=20)
-                self._add_corner_axis(ax_brake, corner_ticks, corner_labels, offset=22)
-
-                selected_ticks = self._select_annotation_ticks(corner_ticks, min_gap=260.0, max_labels=8)
+                selected_ticks = self._select_annotation_ticks(corner_ticks, min_gap=340.0, max_labels=6)
                 self._annotate_speed_markers(
                     ax_speed,
                     distance_a,
@@ -611,7 +659,7 @@ class Telemetry:
                     selected_ticks,
                     color=color_b,
                     vertical="below",
-                    with_unit=True,
+                    with_unit=False,
                 )
 
             os.makedirs("./telemetry_files", exist_ok=True)
