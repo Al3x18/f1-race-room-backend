@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -34,6 +35,16 @@ def _default_provider_order(provider: str):
         "openf1": ["openf1", "signalr"],
     }
     return mapping.get(provider, ["signalr"])
+
+
+def _read_app_version(base_dir: Path) -> str:
+    version_file = base_dir / "version.json"
+    try:
+        payload = json.loads(version_file.read_text(encoding="utf-8"))
+        version = str(payload.get("version", "")).strip()
+        return version or "0.0.0"
+    except Exception:
+        return "0.0.0"
 
 
 def _build_providers(settings: AppSettings):
@@ -127,6 +138,7 @@ def create_app(
     server.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     base_dir = Path(__file__).resolve().parent.parent
+    app_version = _read_app_version(base_dir)
     templates = Jinja2Templates(directory=str(base_dir / "templates"))
     server.mount("/static", StaticFiles(directory=str(base_dir / "static")), name="static")
 
@@ -143,6 +155,7 @@ def create_app(
     server.state.live_service = live_service
     server.state.sse_broadcaster = sse_broadcaster
     server.state.legacy_catalog_service = legacy_catalog_service or LegacyCatalogService()
+    server.state.app_version = app_version
 
     @server.get("/")
     async def index(request: Request):
@@ -156,6 +169,7 @@ def create_app(
                 "provider_order": ",".join(provider_order),
                 "live_poll_ms": settings.live_poll_ms,
                 "live_heartbeat_sec": settings.live_heartbeat_sec,
+                "app_version": server.state.app_version,
             },
         )
 
