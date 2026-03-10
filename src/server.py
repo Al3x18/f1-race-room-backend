@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -16,8 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+from src.app_settings import AppSettings
 from src.live import (
-    AppSettings,
     LiveAggregator,
     LiveService,
     OpenF1Provider,
@@ -31,6 +32,8 @@ from src.send_telemetry_file import SendTelemetryFile
 from src.telemetry import Telemetry, TelemetryError
 
 logger = logging.getLogger(__name__)
+_PUBLIC_PATHS = {"/", "/favicon.ico"}
+_PUBLIC_PREFIXES = ("/static/",)
 
 
 def _default_provider_order(provider: str):
@@ -49,6 +52,17 @@ def _read_app_version(base_dir: Path) -> str:
         return version or "0.0.0"
     except Exception:
         return "0.0.0"
+
+
+def _extract_request_api_key(request: Request, header_name: str) -> str:
+    header_value = request.headers.get(header_name, "").strip()
+    if header_value:
+        return header_value
+
+    auth_value = request.headers.get("Authorization", "").strip()
+    if auth_value.lower().startswith("bearer "):
+        return auth_value[7:].strip()
+    return ""
 
 
 def _build_providers(settings: AppSettings):
@@ -169,6 +183,34 @@ def create_app(
     server.state.telemetry_semaphore = asyncio.Semaphore(telemetry_config.max_concurrency)
     server.state.telemetry_pdf_cache = telemetry_cache
     server.state.telemetry_cache_locks = {}
+
+    @server.middleware("http")
+    async def api_key_guard(request: Request, call_next):
+        expected_api_key = server.state.settings.api_request_key
+        request_path = request.url.path
+        is_public_path = request_path in _PUBLIC_PATHS or any(
+            request_path.startswith(prefix) for prefix in _PUBLIC_PREFIXES
+        )
+        if not expected_api_key or request.method == "OPTIONS" or is_public_path:
+            return await call_next(request)
+
+        provided_api_key = _extract_request_api_key(
+            request,
+            server.state.settings.api_key_header,
+        )
+        if provided_api_key and secrets.compare_digest(provided_api_key, expected_api_key):
+            return await call_next(request)
+
+        client_host = request.client.host if request.client else "unknown"
+        logger.warning(
+            "[auth] unauthorized request path=%s client=%s",
+            request.url.path,
+            client_host,
+        )
+        return JSONResponse(
+            {"detail": "Unauthorized: invalid or missing API key"},
+            status_code=401,
+        )
 
     @server.get("/")
     async def index(request: Request):
