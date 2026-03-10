@@ -53,6 +53,10 @@ SIGNALR_TIMEOUT_SEC=8
 SIGNALR_NO_AUTH=true
 SIGNALR_ACCESS_TOKEN=
 SIGNALR_VERIFY_SSL=true
+# If empty, API key is not required.
+API_REQUEST_KEY=
+# Header used to send API key when API_REQUEST_KEY is set.
+API_KEY_HEADER=X-API-Key
 ```
 
 You can start from `.env.example`.
@@ -66,6 +70,11 @@ Quick provider switching:
 - `PROVIDER_ORDER` defines fallback chain order (left to right)
 - If you want no fallback, use `PROVIDER_ORDER=signalr`
 - OpenF1 access token is automatically refreshed before the 1-hour expiry window.
+- API key protection (optional):
+  - if `API_REQUEST_KEY` is empty, API key authentication is disabled
+  - set `API_REQUEST_KEY` to enforce authentication on all endpoints
+  - client must send key via header `X-API-Key` (or custom header from `API_KEY_HEADER`)
+  - `Authorization: Bearer <key>` is also accepted
 
 ## Run Locally
 
@@ -87,6 +96,13 @@ curl -s http://localhost:5050/live/session/current | jq
 curl -s http://localhost:5050/live/timing/snapshot | jq
 curl -N http://localhost:5050/live/timing/stream
 curl -s -X POST http://localhost:5050/live/reload | jq
+```
+
+With API key enabled:
+
+```bash
+curl -s -H "X-API-Key: <YOUR_API_KEY>" http://localhost:5050/status | jq
+curl -s -H "Authorization: Bearer <YOUR_API_KEY>" http://localhost:5050/live/timing/snapshot | jq
 ```
 
 Legacy PDF endpoint example:
