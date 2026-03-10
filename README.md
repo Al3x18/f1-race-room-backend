@@ -40,6 +40,11 @@ OPENF1_TOKEN_REFRESH_SEC=120
 LIVE_POLL_MS=800
 LIVE_HEARTBEAT_SEC=10
 ALLOWED_ORIGINS=*
+TELEMETRY_CONFIG_FILE=./config/telemetry.toml
+TELEMETRY_MAX_CONCURRENCY=2
+TELEMETRY_MAX_PLOT_POINTS=1800
+TELEMETRY_CACHE_DIR=./telemetry_files_cache
+TELEMETRY_CACHE_MAX_DOCS=20
 PROVIDER=signalr
 PROVIDER_ORDER=signalr
 SIGNALR_CONNECTION_URL=wss://livetiming.formula1.com/signalrcore
@@ -90,6 +95,18 @@ Legacy PDF endpoint example:
 curl -v "http://localhost:5050/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" -o telemetry.pdf
 curl -v "http://localhost:5050/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf
 ```
+
+## Telemetry PDF Cache
+
+- Cached PDF files are stored in project root under `./telemetry_files_cache` (configurable via `cache_dir` in `config/telemetry.toml`).
+- File naming is deterministic:
+  - single driver: `ver_australian_grand_prix_race_2026.pdf`
+  - compare: `ver_vs_lec_australian_grand_prix_race_2026.pdf`
+- On request:
+  - if cached file exists, server returns cache file (no FastF1 generation)
+  - if missing, server generates via FastF1 and stores the file in cache
+- Cache keeps at most `cache_max_docs` documents (default `20`) and evicts least-recently-used by mtime.
+- Logs explicitly show cache vs FastF1 path (`cache-hit`, `cache-miss generating-fastf1`).
 
 Legacy catalog endpoints (for dynamic app dropdowns):
 
@@ -144,6 +161,15 @@ When `provider=openf1`, `timing` also includes:
   - feed is connected but no useful live payload is available yet
 - In production:
   - keep `SIGNALR_VERIFY_SSL=true`
+- If telemetry PDF requests hit memory limits on small instances:
+  - set `TELEMETRY_MAX_CONCURRENCY=1` if you need to reduce concurrent peak RAM
+  - lower `TELEMETRY_MAX_PLOT_POINTS` (e.g. `1200`) to reduce chart memory usage
+  - cache settings:
+    - `TELEMETRY_CACHE_DIR` (default `./telemetry_files_cache`)
+    - `TELEMETRY_CACHE_MAX_DOCS=20` (evicts least recently used PDF by mtime)
+  - quick config file:
+    - edit `config/telemetry.toml` (`max_concurrency`, `max_plot_points`, `cache_dir`, `cache_max_docs`)
+    - optional override path with `TELEMETRY_CONFIG_FILE`
 
 ## Technical Documentation
 
