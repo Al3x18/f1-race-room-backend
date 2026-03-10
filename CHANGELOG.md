@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.9 - 2026-03-11
+
+- Added optional API key protection for all HTTP endpoints.
+- API key can be sent securely via `X-API-Key` (or configured custom header) or `Authorization: Bearer <key>`.
+- API key authentication is automatically disabled when `API_REQUEST_KEY` is empty.
+- Added explicit unauthorized response handling (`401`) for missing/invalid API keys.
+- Refactored app settings location from `src/live/settings.py` to `src/app_settings.py`.
+- Reorganized `.env` and `.env.example` with a dedicated **API Security** section at the top.
+- Updated README with API key behavior, usage examples, and configuration notes.
+
 ## 1.0.8 - 2026-03-10
 
 - Optimized telemetry PDF generation to reduce RAM usage (lighter FastF1 loading + configurable plot downsampling).
