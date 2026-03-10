@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.background import BackgroundTask
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.live import (
@@ -25,8 +25,12 @@ from src.live import (
     UnofficialF1SignalRProvider,
 )
 from src.legacy_catalog import LegacyCatalogService
+from src.telemetry_cache import TelemetryPdfCache
+from src.telemetry_runtime_config import TelemetryRuntimeConfig
 from src.send_telemetry_file import SendTelemetryFile
 from src.telemetry import Telemetry, TelemetryError
+
+logger = logging.getLogger(__name__)
 
 
 def _default_provider_order(provider: str):
@@ -99,6 +103,11 @@ def create_app(
 ) -> FastAPI:
     app_settings = settings or AppSettings.from_env()
     aggregator = LiveAggregator()
+    telemetry_config = TelemetryRuntimeConfig.load()
+    telemetry_cache = TelemetryPdfCache(
+        cache_dir=telemetry_config.cache_dir,
+        max_docs=telemetry_config.cache_max_docs,
+    )
 
     if primary_provider is None and fallback_provider is None:
         providers = _build_providers(app_settings)
@@ -156,6 +165,10 @@ def create_app(
     server.state.sse_broadcaster = sse_broadcaster
     server.state.legacy_catalog_service = legacy_catalog_service or LegacyCatalogService()
     server.state.app_version = app_version
+    server.state.telemetry_config = telemetry_config
+    server.state.telemetry_semaphore = asyncio.Semaphore(telemetry_config.max_concurrency)
+    server.state.telemetry_pdf_cache = telemetry_cache
+    server.state.telemetry_cache_locks = {}
 
     @server.get("/")
     async def index(request: Request):
@@ -204,13 +217,59 @@ def create_app(
             track_name=track_name,
             session=session,
             driver_name=driver_name,
+            max_plot_points=server.state.telemetry_config.max_plot_points,
         )
         send_manager = SendTelemetryFile()
+        cache_manager = server.state.telemetry_pdf_cache
+        cache_filename = cache_manager.single_filename(year, track_name, session, driver_name)
+
+        cached_file_path = cache_manager.get_cached_path(cache_filename)
+        if cached_file_path:
+            logger.info(
+                "[telemetry] cache-hit single file=%s year=%s track=%s session=%s driver=%s",
+                cache_filename,
+                year,
+                track_name,
+                session,
+                driver_name,
+            )
+            return send_manager.send_file_from_path(file_path=cached_file_path)
+
+        cache_lock = server.state.telemetry_cache_locks.setdefault(cache_filename, asyncio.Lock())
 
         try:
-            file_path = await asyncio.to_thread(telemetry.get_fl_telemetry)
+            async with cache_lock:
+                cached_file_path = cache_manager.get_cached_path(cache_filename)
+                if cached_file_path:
+                    logger.info(
+                        "[telemetry] cache-hit-after-lock single file=%s year=%s track=%s session=%s driver=%s",
+                        cache_filename,
+                        year,
+                        track_name,
+                        session,
+                        driver_name,
+                    )
+                    return send_manager.send_file_from_path(file_path=cached_file_path)
+
+                async with server.state.telemetry_semaphore:
+                    output_path = cache_manager.prepare_output_path(cache_filename)
+                    logger.info(
+                        "[telemetry] cache-miss generating-fastf1 single file=%s year=%s track=%s session=%s driver=%s",
+                        cache_filename,
+                        year,
+                        track_name,
+                        session,
+                        driver_name,
+                    )
+                    file_path = await asyncio.to_thread(telemetry.get_fl_telemetry, output_path)
+                    cache_manager.touch(file_path)
+                    cache_manager.enforce_limit()
+                    logger.info(
+                        "[telemetry] generated-fastf1 single file=%s path=%s",
+                        cache_filename,
+                        file_path,
+                    )
             response = send_manager.send_file_from_path(file_path=file_path)
-            response.background = BackgroundTask(send_manager.delete_file, file_path)
             return response
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -248,17 +307,73 @@ def create_app(
             track_name=track_name,
             session=session,
             driver_name=driver_a,
+            max_plot_points=server.state.telemetry_config.max_plot_points,
         )
         send_manager = SendTelemetryFile()
+        cache_manager = server.state.telemetry_pdf_cache
+        cache_filename = cache_manager.comparison_filename(
+            year=year,
+            track_name=track_name,
+            session=session,
+            driver_a=driver_a,
+            driver_b=driver_b,
+        )
 
-        try:
-            file_path = await asyncio.to_thread(
-                telemetry.get_comparison_telemetry_pdf,
+        cached_file_path = cache_manager.get_cached_path(cache_filename)
+        if cached_file_path:
+            logger.info(
+                "[telemetry] cache-hit compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
+                cache_filename,
+                year,
+                track_name,
+                session,
                 driver_a,
                 driver_b,
             )
+            return send_manager.send_file_from_path(file_path=cached_file_path)
+
+        cache_lock = server.state.telemetry_cache_locks.setdefault(cache_filename, asyncio.Lock())
+
+        try:
+            async with cache_lock:
+                cached_file_path = cache_manager.get_cached_path(cache_filename)
+                if cached_file_path:
+                    logger.info(
+                        "[telemetry] cache-hit-after-lock compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
+                        cache_filename,
+                        year,
+                        track_name,
+                        session,
+                        driver_a,
+                        driver_b,
+                    )
+                    return send_manager.send_file_from_path(file_path=cached_file_path)
+
+                async with server.state.telemetry_semaphore:
+                    output_path = cache_manager.prepare_output_path(cache_filename)
+                    logger.info(
+                        "[telemetry] cache-miss generating-fastf1 compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
+                        cache_filename,
+                        year,
+                        track_name,
+                        session,
+                        driver_a,
+                        driver_b,
+                    )
+                    file_path = await asyncio.to_thread(
+                        telemetry.get_comparison_telemetry_pdf,
+                        driver_a,
+                        driver_b,
+                        output_path,
+                    )
+                    cache_manager.touch(file_path)
+                    cache_manager.enforce_limit()
+                    logger.info(
+                        "[telemetry] generated-fastf1 compare file=%s path=%s",
+                        cache_filename,
+                        file_path,
+                    )
             response = send_manager.send_file_from_path(file_path=file_path)
-            response.background = BackgroundTask(send_manager.delete_file, file_path)
             return response
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
