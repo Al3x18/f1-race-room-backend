@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from src.live.settings import AppSettings
+from src.app_settings import AppSettings
 from src.server import create_app
 
 
