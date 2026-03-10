@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from src.live.aggregator import LiveAggregator
 from src.live.sse import SSEBroadcaster
-from src.live.settings import AppSettings
+from src.app_settings import AppSettings
 from src.server import create_app
 
 
@@ -43,7 +43,7 @@ class FailingProvider:
         raise RuntimeError("provider unavailable")
 
 
-def build_settings(heartbeat=1):
+def build_settings(heartbeat=1, api_request_key=""):
     return AppSettings(
         openf1_base_url="https://api.openf1.org/v1",
         openf1_api_key="",
@@ -51,6 +51,7 @@ def build_settings(heartbeat=1):
         live_heartbeat_sec=heartbeat,
         allowed_origins=["*"],
         provider="openf1",
+        api_request_key=api_request_key,
     )
 
 
@@ -148,3 +149,20 @@ def test_status_returns_degraded_when_provider_fails():
         response = client.get("/status")
         assert response.status_code == 200
         assert response.json()["status"] == "degraded"
+
+
+def test_api_key_guard_blocks_missing_key_and_accepts_header_or_bearer():
+    primary = FailingProvider(name="openf1")
+    fallback = FailingProvider(name="fastf1")
+    app = create_app(
+        settings=build_settings(api_request_key="secret-key"),
+        primary_provider=primary,
+        fallback_provider=fallback,
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/").status_code == 200
+        assert client.get("/status").status_code == 401
+        assert client.get("/status", headers={"X-API-Key": "wrong"}).status_code == 401
+        assert client.get("/status", headers={"X-API-Key": "secret-key"}).status_code == 200
+        assert client.get("/status", headers={"Authorization": "Bearer secret-key"}).status_code == 200
