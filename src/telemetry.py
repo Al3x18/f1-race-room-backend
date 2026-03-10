@@ -1,4 +1,5 @@
 import os
+import gc
 
 import fastf1 as ff1
 import matplotlib
@@ -16,32 +17,61 @@ class TelemetryError(RuntimeError):
 
 
 class Telemetry:
-    def __init__(self, year: int, track_name: str, session: str, driver_name: str):
+    def __init__(
+        self,
+        year: int,
+        track_name: str,
+        session: str,
+        driver_name: str,
+        max_plot_points: int | None = None,
+    ):
         self.year = year
         self.track_name = track_name
         self.session = session
         self.driver_name = driver_name
+        if max_plot_points is None:
+            self.max_plot_points = self._env_int("TELEMETRY_MAX_PLOT_POINTS", default=1800, minimum=300)
+        else:
+            self.max_plot_points = max(300, int(max_plot_points))
+
+    @staticmethod
+    def _env_int(name: str, default: int, minimum: int = 1) -> int:
+        raw_value = os.getenv(name, str(default))
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed >= minimum else default
 
     def load_session_data(self):
         try:
             with fastf1_cache_guard():
                 loaded_session = ff1.get_session(self.year, self.track_name, self.session)
-                loaded_session.load()
+                loaded_session.load(
+                    laps=True,
+                    telemetry=True,
+                    weather=False,
+                    messages=False,
+                )
             return loaded_session
         except Exception as exc:
             raise TelemetryError(f"Error loading session data: {exc}") from exc
 
-    def get_fl_telemetry(self) -> str:
-        session = self.load_session_data()
+    def get_fl_telemetry(self, output_path: str | None = None) -> str:
+        session = None
+        try:
+            session = self.load_session_data()
+            driver_laps = session.laps.pick_drivers(self.driver_name)
+            if driver_laps.empty:
+                raise TelemetryError(f"No laps found for driver {self.driver_name}")
 
-        driver_laps = session.laps.pick_drivers(self.driver_name)
-        if driver_laps.empty:
-            raise TelemetryError(f"No laps found for driver {self.driver_name}")
-
-        fastest_lap = driver_laps.pick_fastest()
-        telemetry = fastest_lap.get_telemetry()
-
-        return self.build_fastest_lap_plot(session, telemetry, fastest_lap)
+            fastest_lap = driver_laps.pick_fastest()
+            telemetry = fastest_lap.get_car_data(interpolate_edges=True).add_distance()
+            return self.build_fastest_lap_plot(session, telemetry, fastest_lap, output_path=output_path)
+        finally:
+            session = None
+            plt.close("all")
+            gc.collect()
 
     @staticmethod
     def _extract_corner_markers(session, telemetry, distance):
@@ -112,30 +142,41 @@ class Telemetry:
         ax_corner_labels.tick_params(axis="x", colors="#d8e5f6", labelsize=8, pad=1)
         ax_corner_labels.set_xlabel("Corner #", color="#a9bdd2", labelpad=8)
 
-    def get_comparison_telemetry_pdf(self, driver_a: str, driver_b: str) -> str:
-        session = self.load_session_data()
+    def get_comparison_telemetry_pdf(
+        self,
+        driver_a: str,
+        driver_b: str,
+        output_path: str | None = None,
+    ) -> str:
+        session = None
+        try:
+            session = self.load_session_data()
+            laps_a = session.laps.pick_drivers(driver_a)
+            laps_b = session.laps.pick_drivers(driver_b)
+            if laps_a.empty:
+                raise TelemetryError(f"No laps found for driver {driver_a}")
+            if laps_b.empty:
+                raise TelemetryError(f"No laps found for driver {driver_b}")
 
-        laps_a = session.laps.pick_drivers(driver_a)
-        laps_b = session.laps.pick_drivers(driver_b)
-        if laps_a.empty:
-            raise TelemetryError(f"No laps found for driver {driver_a}")
-        if laps_b.empty:
-            raise TelemetryError(f"No laps found for driver {driver_b}")
+            lap_a = laps_a.pick_fastest()
+            lap_b = laps_b.pick_fastest()
+            tel_a = lap_a.get_car_data(interpolate_edges=True).add_distance()
+            tel_b = lap_b.get_car_data(interpolate_edges=True).add_distance()
 
-        lap_a = laps_a.pick_fastest()
-        lap_b = laps_b.pick_fastest()
-        tel_a = lap_a.get_telemetry()
-        tel_b = lap_b.get_telemetry()
-
-        return self.build_comparison_plot(
-            session=session,
-            driver_a=driver_a,
-            driver_b=driver_b,
-            lap_a=lap_a,
-            lap_b=lap_b,
-            telemetry_a=tel_a,
-            telemetry_b=tel_b,
-        )
+            return self.build_comparison_plot(
+                session=session,
+                driver_a=driver_a,
+                driver_b=driver_b,
+                lap_a=lap_a,
+                lap_b=lap_b,
+                telemetry_a=tel_a,
+                telemetry_b=tel_b,
+                output_path=output_path,
+            )
+        finally:
+            session = None
+            plt.close("all")
+            gc.collect()
 
     @staticmethod
     def _format_lap_time(lap_time) -> str:
@@ -165,10 +206,44 @@ class Telemetry:
 
     @staticmethod
     def _prepare_telemetry(telemetry):
-        telemetry = telemetry.copy()
+        if telemetry is None:
+            return telemetry
         if "Distance" not in telemetry.columns:
-            telemetry["Distance"] = range(len(telemetry))
+            telemetry = telemetry.copy()
+            telemetry["Distance"] = np.arange(len(telemetry), dtype=float)
         return telemetry
+
+    @staticmethod
+    def _downsample_telemetry(telemetry, max_points):
+        if telemetry is None:
+            return telemetry
+        if max_points <= 0:
+            return telemetry
+        total_rows = len(telemetry.index)
+        if total_rows <= max_points:
+            return telemetry
+        step = max(1, int(np.ceil(total_rows / max_points)))
+        return telemetry.iloc[::step].reset_index(drop=True)
+
+    @staticmethod
+    def _downsample_with_delta(telemetry, delta_time, max_points):
+        if telemetry is None:
+            return telemetry, delta_time
+        if max_points <= 0:
+            return telemetry, delta_time
+        total_rows = len(telemetry.index)
+        if total_rows <= max_points:
+            return telemetry, delta_time
+        sampled = Telemetry._downsample_telemetry(telemetry, max_points)
+        if delta_time is None:
+            return sampled, delta_time
+        if len(delta_time) != len(telemetry):
+            return sampled, delta_time
+        payload = telemetry.copy()
+        payload["_delta_time"] = np.asarray(delta_time, dtype=float)
+        sampled_payload = Telemetry._downsample_telemetry(payload, max_points)
+        sampled_delta = np.asarray(sampled_payload.pop("_delta_time"), dtype=float)
+        return sampled_payload, sampled_delta
 
     @staticmethod
     def _select_annotation_ticks(corner_ticks, min_gap=220.0, max_labels=10):
@@ -265,15 +340,14 @@ class Telemetry:
     def _calculate_delta(lap_a, lap_b, telemetry_a, telemetry_b):
         try:
             delta_time, ref_tel, compare_tel = ff1_utils.delta_time(lap_a, lap_b)
-            return np.asarray(delta_time, dtype=float), ref_tel.copy(), compare_tel.copy()
+            return np.asarray(delta_time, dtype=float), ref_tel, compare_tel
         except Exception:
             return None, telemetry_a, telemetry_b
 
-    def build_fastest_lap_plot(self, session, telemetry, fastest_lap) -> str:
+    def build_fastest_lap_plot(self, session, telemetry, fastest_lap, output_path: str | None = None) -> str:
+        figure = None
         try:
             telemetry = self._prepare_telemetry(telemetry)
-
-            distance = telemetry.get("Distance")
             speed = telemetry.get("Speed")
             throttle = telemetry.get("Throttle")
             brake = telemetry.get("Brake")
@@ -300,6 +374,14 @@ class Telemetry:
                 lambda s: (s > 0).mean() * 100.0,
                 suffix="%",
             )
+
+            telemetry = self._downsample_telemetry(telemetry, self.max_plot_points)
+            distance = telemetry.get("Distance")
+            speed = telemetry.get("Speed")
+            throttle = telemetry.get("Throttle")
+            brake_pct = telemetry.get("Brake")
+            if brake_pct is not None:
+                brake_pct = brake_pct * 100.0
 
             figure = plt.figure(figsize=(16, 11), facecolor="#0f1720")
             grid = figure.add_gridspec(
@@ -430,14 +512,22 @@ class Telemetry:
                     with_unit=True,
                 )
 
-            os.makedirs("./telemetry_files", exist_ok=True)
-            file_path = f"./telemetry_files/{self.driver_name}_{self.session}_{self.track_name}_{self.year}.pdf"
+            if output_path:
+                file_path = output_path
+                output_dir = os.path.dirname(file_path)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+            else:
+                os.makedirs("./telemetry_files", exist_ok=True)
+                file_path = f"./telemetry_files/{self.driver_name}_{self.session}_{self.track_name}_{self.year}.pdf"
             figure.savefig(file_path, bbox_inches="tight", facecolor=figure.get_facecolor())
-            plt.close(figure)
 
             return file_path
         except Exception as exc:
             raise TelemetryError(f"Error generating telemetry plot: {exc}") from exc
+        finally:
+            if figure is not None:
+                plt.close(figure)
 
     def build_comparison_plot(
         self,
@@ -448,7 +538,9 @@ class Telemetry:
         lap_b,
         telemetry_a,
         telemetry_b,
+        output_path: str | None = None,
     ) -> str:
+        figure = None
         try:
             telemetry_a = self._prepare_telemetry(telemetry_a)
             telemetry_b = self._prepare_telemetry(telemetry_b)
@@ -460,6 +552,12 @@ class Telemetry:
             )
             telemetry_a = self._prepare_telemetry(telemetry_a)
             telemetry_b = self._prepare_telemetry(telemetry_b)
+            telemetry_a, delta_time = self._downsample_with_delta(
+                telemetry_a,
+                delta_time,
+                self.max_plot_points,
+            )
+            telemetry_b = self._downsample_telemetry(telemetry_b, self.max_plot_points)
 
             distance_a = telemetry_a.get("Distance")
             distance_b = telemetry_b.get("Distance")
@@ -662,12 +760,20 @@ class Telemetry:
                     with_unit=False,
                 )
 
-            os.makedirs("./telemetry_files", exist_ok=True)
-            file_path = (
-                f"./telemetry_files/{driver_a}_{driver_b}_{self.session}_{self.track_name}_{self.year}_comparison.pdf"
-            )
+            if output_path:
+                file_path = output_path
+                output_dir = os.path.dirname(file_path)
+                if output_dir:
+                    os.makedirs(output_dir, exist_ok=True)
+            else:
+                os.makedirs("./telemetry_files", exist_ok=True)
+                file_path = (
+                    f"./telemetry_files/{driver_a}_{driver_b}_{self.session}_{self.track_name}_{self.year}_comparison.pdf"
+                )
             figure.savefig(file_path, bbox_inches="tight", facecolor=figure.get_facecolor())
-            plt.close(figure)
             return file_path
         except Exception as exc:
             raise TelemetryError(f"Error generating comparison telemetry plot: {exc}") from exc
+        finally:
+            if figure is not None:
+                plt.close(figure)
