@@ -216,16 +216,15 @@ def create_app(
     @server.get("/")
     async def index(request: Request):
         settings = server.state.settings
-        provider_order = settings.provider_order or _default_provider_order(settings.provider)
         return templates.TemplateResponse(
             "index.html",
             {
                 "request": request,
-                "provider": settings.provider,
-                "provider_order": ",".join(provider_order),
-                "live_poll_ms": settings.live_poll_ms,
-                "live_heartbeat_sec": settings.live_heartbeat_sec,
                 "app_version": server.state.app_version,
+                "api_key_header": settings.api_key_header,
+                "cache_max_documents": telemetry_config.cache_max_docs,
+                "cache_max_mb": telemetry_config.cache_max_mb,
+                "max_concurrency": telemetry_config.max_concurrency,
             },
         )
 

@@ -1,146 +1,335 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>F1 Race Room Backend</title>
-    <link rel="stylesheet" href="/static/css/style.css?v=20260306-1">
+    <meta name="description" content="Documentazione del servizio F1 Race Room per la generazione e la cache di report PDF telemetrici.">
+    <title>F1 Race Room — Telemetry Service</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=20260720-1">
 </head>
 <body>
-    <main class="layout">
+    <header class="topbar">
+        <a class="brand" href="/" aria-label="F1 Race Room Telemetry, home">
+            <span class="brand-mark" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+            </span>
+            <span class="brand-copy">
+                <strong>F1 Race Room</strong>
+                <small>Telemetry service</small>
+            </span>
+        </a>
+
+        <div class="topbar-meta">
+            <span class="service-state">
+                <span class="state-dot" aria-hidden="true"></span>
+                API protetta
+            </span>
+            <span class="version">v{{ app_version }}</span>
+        </div>
+    </header>
+
+    <main>
         <section class="hero">
-            <p class="eyebrow">FastAPI Live Timing</p>
-            <h1>F1 Race Room Backend</h1>
-            <p class="subtitle">API for app clients: live snapshot, SSE stream, reload, legacy telemetry PDF, and FastF1 catalog discovery.</p>
+            <div class="hero-grid" aria-hidden="true"></div>
+            <div class="hero-copy">
+                <p class="kicker">FastF1 telemetry engine</p>
+                <h1>Trasforma ogni giro<br><em>in dati leggibili.</em></h1>
+                <p class="hero-lead">
+                    Un servizio dedicato alla generazione di report PDF telemetrici
+                    individuali e comparativi, con cache persistente pensata per
+                    ridurre tempi di risposta e consumo di risorse.
+                </p>
 
-            <div class="badges">
-                <span class="badge">version: <strong>{{ app_version }}</strong></span>
-                <span class="badge">provider default: <strong>{{ provider }}</strong></span>
-                <span class="badge">provider chain: <strong>{{ provider_order }}</strong></span>
-                <span class="badge">poll: <strong>{{ live_poll_ms }}ms</strong></span>
-                <span class="badge">heartbeat: <strong>{{ live_heartbeat_sec }}s</strong></span>
+                <div class="hero-tags" aria-label="Caratteristiche principali">
+                    <span>PDF individuale</span>
+                    <span>Confronto piloti</span>
+                    <span>Cache LRU</span>
+                    <span>FastF1</span>
+                </div>
+            </div>
+
+            <div class="telemetry-visual" aria-hidden="true">
+                <div class="visual-label">
+                    <span>Lap trace</span>
+                    <strong>MONZA / Q</strong>
+                </div>
+                <svg viewBox="0 0 520 310" role="img">
+                    <defs>
+                        <linearGradient id="trace-gradient" x1="0" x2="1">
+                            <stop offset="0" stop-color="#ff3b4f"/>
+                            <stop offset="1" stop-color="#ff8059"/>
+                        </linearGradient>
+                        <filter id="trace-glow" x="-30%" y="-30%" width="160%" height="160%">
+                            <feGaussianBlur stdDeviation="5" result="blur"/>
+                            <feMerge>
+                                <feMergeNode in="blur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+                    <g class="graph-lines">
+                        <path d="M20 62H500M20 122H500M20 182H500M20 242H500"/>
+                        <path d="M90 28V278M180 28V278M270 28V278M360 28V278M450 28V278"/>
+                    </g>
+                    <path class="ghost-trace" d="M22 240 C58 233 68 215 96 220 S135 248 166 202 S205 84 238 112 S275 230 312 195 S350 58 385 84 S420 220 500 70"/>
+                    <path class="main-trace" filter="url(#trace-glow)" d="M22 240 C58 230 67 201 98 211 S135 241 166 190 S205 70 238 102 S274 216 312 182 S350 46 385 72 S423 205 500 54"/>
+                    <circle cx="385" cy="72" r="6"/>
+                    <text x="396" y="60">325 km/h</text>
+                </svg>
+                <div class="visual-stats">
+                    <div><span>Speed</span><strong>325<small> km/h</small></strong></div>
+                    <div><span>Throttle</span><strong>100<small>%</small></strong></div>
+                    <div><span>Delta</span><strong class="positive">−0.184<small>s</small></strong></div>
+                </div>
             </div>
         </section>
 
-        <section class="panel status-panel panel-status">
-            <div class="panel-head">
-                <h2>Runtime Status</h2>
-                <button id="refresh-status" type="button">Refresh</button>
+        <section class="service-strip" aria-label="Configurazione del servizio">
+            <article>
+                <span class="metric-index">01</span>
+                <div>
+                    <small>Documenti in cache</small>
+                    <strong>{{ cache_max_documents }} PDF</strong>
+                </div>
+            </article>
+            <article>
+                <span class="metric-index">02</span>
+                <div>
+                    <small>Spazio massimo</small>
+                    <strong>{{ cache_max_mb }} MiB</strong>
+                </div>
+            </article>
+            <article>
+                <span class="metric-index">03</span>
+                <div>
+                    <small>Generazioni parallele</small>
+                    <strong>{{ max_concurrency }}</strong>
+                </div>
+            </article>
+            <article>
+                <span class="metric-index">04</span>
+                <div>
+                    <small>Autenticazione</small>
+                    <strong>{{ api_key_header }}</strong>
+                </div>
+            </article>
+        </section>
+
+        <section class="section-block workflow" aria-labelledby="workflow-title">
+            <div class="section-heading">
+                <div>
+                    <p class="section-number">01 / Flusso</p>
+                    <h2 id="workflow-title">Come ottenere una telemetria</h2>
+                </div>
+                <p>
+                    Il catalogo guida il client dai dati generali fino al report,
+                    evitando richieste con parametri non validi.
+                </p>
             </div>
-            <pre id="status-json">Loading...</pre>
-        </section>
 
-        <section class="panel panel-live">
-            <h2>Live Endpoints</h2>
-            <ul class="endpoints">
-                <li><span class="method get">GET</span><a href="/live/session/current" target="_blank" rel="noreferrer">/live/session/current</a><small>Current session cached in memory</small></li>
-                <li><span class="method get">GET</span><a href="/live/timing/snapshot" target="_blank" rel="noreferrer">/live/timing/snapshot</a><small>Complete live snapshot</small></li>
-                <li><span class="method get">GET</span><a href="/live/timing/stream" target="_blank" rel="noreferrer">/live/timing/stream</a><small>SSE stream with update/heartbeat events</small></li>
-                <li><span class="method post">POST</span><a href="/live/reload" target="_blank" rel="noreferrer">/live/reload</a><small>Forces one immediate poll cycle</small></li>
-            </ul>
-        </section>
-
-        <section class="panel panel-catalog">
-            <h2>Legacy Catalog Flow</h2>
-            <ul class="endpoints">
-                <li><span class="method get">GET</span><a href="/legacy/catalog/years" target="_blank" rel="noreferrer">/legacy/catalog/years</a><small>Returns available years for FastF1 schedule data</small></li>
-                <li><span class="method get">GET</span><a href="/legacy/catalog/events?year=2024" target="_blank" rel="noreferrer">/legacy/catalog/events?year=2024</a><small>Returns events and sessions available for the selected year</small></li>
-                <li><span class="method get">GET</span><a href="/legacy/catalog/drivers?year=2024&trackName=Monaco&session=Q" target="_blank" rel="noreferrer">/legacy/catalog/drivers?year=2024&amp;trackName=Monaco&amp;session=Q</a><small>Returns drivers with available telemetry for the selected session</small></li>
-                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry?year=...&amp;trackName=...&amp;session=...&amp;driverName=...</a><small>Generate telemetry PDF using values selected from catalog endpoints</small></li>
-                <li><span class="method get">GET</span><a href="/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" target="_blank" rel="noreferrer">/get-telemetry-compare?year=...&amp;trackName=...&amp;session=...&amp;driverA=...&amp;driverB=...</a><small>Generate comparison PDF with overlaid charts for two selected drivers</small></li>
-            </ul>
-        </section>
-
-        <section class="panel panel-legacy">
-            <h2>Legacy Endpoints</h2>
-            <ul class="endpoints">
-                <li><span class="method get">GET</span><a href="/status" target="_blank" rel="noreferrer">/status</a><small>Compact backend health/status</small></li>
-                <li><span class="method get">GET</span><a href="/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" target="_blank" rel="noreferrer">/get-telemetry</a><small>Legacy telemetry PDF endpoint (required params: year, trackName, session, driverName)</small></li>
-                <li><span class="method get">GET</span><a href="/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" target="_blank" rel="noreferrer">/get-telemetry-compare</a><small>Comparison PDF for two drivers (required params: year, trackName, session, driverA, driverB)</small></li>
-            </ul>
-        </section>
-
-        <section class="panel panel-data two-cols">
-            <div>
-                <h2>Per-Driver Data</h2>
-                <ul class="data-list">
-                    <li>Position, gap-to-leader, interval</li>
-                    <li>Lap time, sectors, microsectors</li>
-                    <li>Tyre compound and laps on current tyre</li>
-                    <li>Pit status and driver/team metadata</li>
-                </ul>
-            </div>
-            <div>
-                <h2>Microsector Labels</h2>
-                <ul class="data-list mono">
-                    <li><code>0</code> -> <code>no_data</code></li>
-                    <li><code>2048</code> -> <code>slower</code></li>
-                    <li><code>2049</code> -> <code>improved</code></li>
-                    <li><code>2051</code> -> <code>best_overall</code></li>
-                    <li><code>2064</code> -> <code>pitlane</code></li>
-                    <li>altri -> <code>unknown</code></li>
-                </ul>
-            </div>
-        </section>
-
-        <section class="panel panel-compare-doc">
-            <h2>Telemetry Compare API Guide</h2>
-            <ol class="flow-list">
-                <li>Call <code>/legacy/catalog/years</code> and select the season.</li>
-                <li>Call <code>/legacy/catalog/events?year=...</code> and pick <code>event_name</code> + session code.</li>
-                <li>Call <code>/legacy/catalog/drivers?year=...&amp;trackName=...&amp;session=...</code> and pick two drivers.</li>
-                <li>Download compare PDF with <code>/get-telemetry-compare?year=...&amp;trackName=...&amp;session=...&amp;driverA=...&amp;driverB=...</code>.</li>
+            <ol class="steps">
+                <li>
+                    <span class="step-number">01</span>
+                    <div>
+                        <h3>Scegli la stagione</h3>
+                        <p>Recupera gli anni disponibili oppure usa direttamente una stagione supportata.</p>
+                        <code>GET /legacy/catalog/years</code>
+                    </div>
+                </li>
+                <li>
+                    <span class="step-number">02</span>
+                    <div>
+                        <h3>Trova GP e sessione</h3>
+                        <p>Il calendario restituisce eventi, località e codici sessione utilizzabili.</p>
+                        <code>GET /legacy/catalog/events?year=2024</code>
+                    </div>
+                </li>
+                <li>
+                    <span class="step-number">03</span>
+                    <div>
+                        <h3>Seleziona i piloti</h3>
+                        <p>Carica l’elenco dei piloti con telemetria disponibile per quella sessione.</p>
+                        <code>GET /legacy/catalog/drivers</code>
+                    </div>
+                </li>
+                <li>
+                    <span class="step-number">04</span>
+                    <div>
+                        <h3>Scarica il PDF</h3>
+                        <p>Richiedi il report singolo o il confronto tra due piloti.</p>
+                        <code>GET /get-telemetry</code>
+                    </div>
+                </li>
             </ol>
-            <div class="cmd-grid compare-grid">
-                <pre><code>curl -v "http://localhost:5050/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf</code></pre>
-                <pre><code>200 OK
-content-type: application/pdf
-content-disposition: attachment; filename="VER_LEC_Q_Monaco_2024_comparison.pdf"</code></pre>
-                <pre><code>400 (missing params)
-{"error":"Missing required parameters: year, trackName, session, driverA, driverB"}</code></pre>
-                <pre><code>400 (invalid data)
-{"detail":"Data not found. Could not process comparison telemetry data. Please check the provided parameters."}</code></pre>
-                <pre><code>404
-{"detail":"File not found: ..."}</code></pre>
-                <pre><code>500
-{"detail":"An error occurred: ..."}</code></pre>
-            </div>
-            <p class="panel-note">Compare PDF overlays speed/throttle/brake for two drivers. Corner numbers and corner-speed labels are shown only when FastF1 corner metadata is available.</p>
         </section>
 
-        <section class="panel panel-commands">
-            <h2>Quick Commands</h2>
-            <div class="cmd-grid">
-                <pre><code>curl -s /status | jq</code></pre>
-                <pre><code>curl -s /live/session/current | jq</code></pre>
-                <pre><code>curl -s /live/timing/snapshot | jq</code></pre>
-                <pre><code>curl -N /live/timing/stream</code></pre>
-                <pre><code>curl -s -X POST /live/reload | jq</code></pre>
-                <pre><code>curl -s "/legacy/catalog/years" | jq</code></pre>
-                <pre><code>curl -s "/legacy/catalog/events?year=2024" | jq</code></pre>
-                <pre><code>curl -s "/legacy/catalog/drivers?year=2024&trackName=Monaco&session=Q" | jq</code></pre>
-                <pre><code>curl -v "/get-telemetry?year=2024&trackName=Monaco&session=Q&driverName=VER" -o telemetry.pdf</code></pre>
-                <pre><code>curl -v "/get-telemetry-compare?year=2024&trackName=Monaco&session=Q&driverA=VER&driverB=LEC" -o compare.pdf</code></pre>
+        <section class="report-grid" aria-label="Tipi di report">
+            <article class="report-card report-single">
+                <div class="report-top">
+                    <span class="report-type">Single driver</span>
+                    <span class="report-code">01</span>
+                </div>
+                <h2>Analisi individuale</h2>
+                <p>
+                    Un report completo del giro più veloce con velocità, acceleratore,
+                    freno, marcia, RPM, DRS e riferimenti alle curve.
+                </p>
+                <ul>
+                    <li>Tracce sincronizzate sulla distanza</li>
+                    <li>Indicatori delle curve</li>
+                    <li>Informazioni sessione e pilota</li>
+                </ul>
+                <div class="endpoint">
+                    <span>GET</span>
+                    <code>/get-telemetry</code>
+                </div>
+            </article>
+
+            <article class="report-card report-compare">
+                <div class="report-top">
+                    <span class="report-type">Driver vs driver</span>
+                    <span class="report-code">02</span>
+                </div>
+                <h2>Confronto diretto</h2>
+                <p>
+                    Sovrappone i giri migliori di due piloti per mostrare differenze
+                    di velocità, punti di frenata e applicazione dell’acceleratore.
+                </p>
+                <ul>
+                    <li>Tracce sovrapposte e leggibili</li>
+                    <li>Delta tra i giri migliori</li>
+                    <li>Stessa scala e stessi riferimenti</li>
+                </ul>
+                <div class="endpoint">
+                    <span>GET</span>
+                    <code>/get-telemetry-compare</code>
+                </div>
+            </article>
+        </section>
+
+        <section class="section-block cache-section" aria-labelledby="cache-title">
+            <div class="section-heading">
+                <div>
+                    <p class="section-number">02 / Cache</p>
+                    <h2 id="cache-title">Prima il file, poi FastF1</h2>
+                </div>
+                <p>
+                    Ogni richiesta usa un nome deterministico. Se il PDF esiste,
+                    viene inviato immediatamente senza rigenerare la telemetria.
+                </p>
+            </div>
+
+            <div class="cache-flow">
+                <div class="flow-node request-node">
+                    <small>Richiesta</small>
+                    <strong>Year + GP + Session + Driver</strong>
+                </div>
+                <span class="flow-arrow" aria-hidden="true">→</span>
+                <div class="flow-node decision-node">
+                    <small>Cache lookup</small>
+                    <strong>PDF disponibile?</strong>
+                </div>
+                <div class="flow-branches">
+                    <div>
+                        <span class="branch-label hit">Cache hit</span>
+                        <strong>Invio diretto</strong>
+                        <small>Nessun utilizzo FastF1</small>
+                    </div>
+                    <div>
+                        <span class="branch-label miss">Cache miss</span>
+                        <strong>Generazione PDF</strong>
+                        <small>Massimo {{ max_concurrency }} richieste simultanee</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cache-notes">
+                <p><strong>Politica LRU.</strong> I file usati meno recentemente vengono eliminati quando uno dei due limiti viene superato.</p>
+                <p><strong>Pubblicazione atomica.</strong> Un PDF diventa disponibile soltanto dopo che la generazione è terminata correttamente.</p>
+                <p><strong>Persistenza Railway.</strong> La directory deve essere montata su un Volume per conservare i file tra deploy e riavvii.</p>
+            </div>
+        </section>
+
+        <section class="section-block api-reference" aria-labelledby="reference-title">
+            <div class="section-heading">
+                <div>
+                    <p class="section-number">03 / Utilizzo</p>
+                    <h2 id="reference-title">Esempi di richiesta</h2>
+                </div>
+                <p>
+                    La pagina non esegue chiamate. Gli esempi devono essere utilizzati
+                    da un client autorizzato sostituendo la chiave e i parametri.
+                </p>
+            </div>
+
+            <div class="code-card">
+                <div class="code-head">
+                    <span>Telemetria singola</span>
+                    <small>application/pdf</small>
+                </div>
+                <pre><code>curl \
+  -H "{{ api_key_header }}: &lt;API_KEY&gt;" \
+  "https://&lt;HOST&gt;/get-telemetry?year=2024&amp;trackName=Monaco&amp;session=Q&amp;driverName=VER" \
+  -o telemetry.pdf</code></pre>
+            </div>
+
+            <div class="code-card">
+                <div class="code-head">
+                    <span>Confronto piloti</span>
+                    <small>application/pdf</small>
+                </div>
+                <pre><code>curl \
+  -H "{{ api_key_header }}: &lt;API_KEY&gt;" \
+  "https://&lt;HOST&gt;/get-telemetry-compare?year=2024&amp;trackName=Monaco&amp;session=Q&amp;driverA=VER&amp;driverB=LEC" \
+  -o comparison.pdf</code></pre>
+            </div>
+
+            <div class="parameter-table" role="region" aria-label="Parametri degli endpoint" tabindex="0">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Parametro</th>
+                            <th>Formato</th>
+                            <th>Esempio</th>
+                            <th>Utilizzo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td><code>year</code></td><td>Intero</td><td>2024</td><td>Stagione del campionato</td></tr>
+                        <tr><td><code>trackName</code></td><td>Testo</td><td>Monaco</td><td>Nome evento o circuito FastF1</td></tr>
+                        <tr><td><code>session</code></td><td>Codice</td><td>Q</td><td>FP1, FP2, FP3, Q, SQ, S oppure R</td></tr>
+                        <tr><td><code>driverName</code></td><td>Codice</td><td>VER</td><td>Pilota del report individuale</td></tr>
+                        <tr><td><code>driverA / driverB</code></td><td>Codice</td><td>VER / LEC</td><td>Piloti del confronto</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="response-strip" aria-label="Risposte HTTP">
+            <div>
+                <span class="response-code success">200</span>
+                <p><strong>PDF pronto</strong><small>File restituito o recuperato dalla cache.</small></p>
+            </div>
+            <div>
+                <span class="response-code warning">400</span>
+                <p><strong>Dati non validi</strong><small>Parametri mancanti o telemetria non disponibile.</small></p>
+            </div>
+            <div>
+                <span class="response-code neutral">401</span>
+                <p><strong>Non autorizzato</strong><small>Chiave API mancante oppure errata.</small></p>
+            </div>
+            <div>
+                <span class="response-code error">500</span>
+                <p><strong>Errore interno</strong><small>La generazione non è stata completata.</small></p>
             </div>
         </section>
     </main>
 
-    <script>
-        const statusEl = document.getElementById('status-json');
-        const refreshBtn = document.getElementById('refresh-status');
-
-        async function loadStatus() {
-            try {
-                const response = await fetch('/status', { cache: 'no-store' });
-                const data = await response.json();
-                statusEl.textContent = JSON.stringify(data, null, 2);
-            } catch (error) {
-                statusEl.textContent = `Unable to load /status: ${error}`;
-            }
-        }
-
-        refreshBtn.addEventListener('click', loadStatus);
-        loadStatus();
-    </script>
+    <footer>
+        <p>F1 Race Room <span>/</span> Telemetry Service</p>
+        <p>FastAPI · FastF1 · Persistent PDF Cache</p>
+    </footer>
 </body>
 </html>
