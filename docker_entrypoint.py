@@ -23,11 +23,6 @@ INSECURE_API_KEYS = {
     "replace-me",
     "replace-with-a-long-random-secret",
 }
-INSECURE_ALLOWED_ORIGINS = {
-    "",
-    "*",
-    "https://your-frontend.example",
-}
 
 
 def validate_railway_configuration() -> None:
@@ -39,17 +34,6 @@ def validate_railway_configuration() -> None:
         raise SystemExit(
             "Refusing to start on Railway: set API_REQUEST_KEY to a private "
             "random value of at least 32 characters."
-        )
-
-    allowed_origins = {
-        origin.strip().lower()
-        for origin in os.getenv("ALLOWED_ORIGINS", "").split(",")
-        if origin.strip()
-    }
-    if not allowed_origins or allowed_origins & INSECURE_ALLOWED_ORIGINS:
-        raise SystemExit(
-            "Refusing to start on Railway: set ALLOWED_ORIGINS to the explicit "
-            "HTTPS origin of the frontend."
         )
 
 

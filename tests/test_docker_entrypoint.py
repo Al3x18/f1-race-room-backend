@@ -41,13 +41,12 @@ def test_railway_rejects_placeholder_api_key(monkeypatch):
         docker_entrypoint.validate_railway_configuration()
 
 
-def test_railway_rejects_wildcard_origin(monkeypatch):
+def test_railway_accepts_wildcard_origin_with_private_api_key(monkeypatch):
     monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-id")
     monkeypatch.setenv("API_REQUEST_KEY", "a" * 32)
     monkeypatch.setenv("ALLOWED_ORIGINS", "*")
 
-    with pytest.raises(SystemExit, match="ALLOWED_ORIGINS"):
-        docker_entrypoint.validate_railway_configuration()
+    docker_entrypoint.validate_railway_configuration()
 
 
 def test_railway_accepts_private_api_key(monkeypatch):

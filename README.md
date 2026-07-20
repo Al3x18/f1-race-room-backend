@@ -160,17 +160,17 @@ Recommended production-only variables:
 
 ```env
 API_REQUEST_KEY=<LONG_RANDOM_SECRET>
-ALLOWED_ORIGINS=https://your-frontend.example
+ALLOWED_ORIGINS=*
 SIGNALR_VERIFY_SSL=true
 ```
 
 Do not commit the production secret. `/health` remains public for Railway;
 other API endpoints require the configured key. On Railway the container refuses
 to start if `API_REQUEST_KEY` is missing, still set to the example placeholder,
-or shorter than 32 characters. It also refuses `ALLOWED_ORIGINS=*`, an empty
-origin list, and the example frontend origin.
+or shorter than 32 characters. `ALLOWED_ORIGINS=*` is accepted for native mobile
+clients; use an explicit frontend origin if the API is called by a browser.
 
-For a bulk import, copy `railway.env.example`, replace its two placeholders,
+For a bulk import, copy `railway.env.example`, replace its API key placeholder,
 and import that file into Railway Variables. Do not import the local
 `.env.example`: its relative cache path is intentionally meant for local runs.
 
