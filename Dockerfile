@@ -5,7 +5,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     MPLCONFIGDIR=/tmp/matplotlib \
-    XDG_CACHE_HOME=/tmp/.cache
+    XDG_CACHE_HOME=/tmp/.cache \
+    TELEMETRY_MAX_CONCURRENCY=2 \
+    TELEMETRY_MAX_PLOT_POINTS=1200 \
+    TELEMETRY_CACHE_DIR=/data/telemetry-pdfs \
+    TELEMETRY_CACHE_MAX_DOCS=100 \
+    TELEMETRY_CACHE_MAX_MB=500
 
 WORKDIR /app
 
@@ -22,10 +27,9 @@ RUN python -m pip install --upgrade pip && \
 COPY . .
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /app
-
-USER appuser
+    mkdir -p /data/telemetry-pdfs && \
+    chown -R appuser:appuser /app /data
 
 EXPOSE 5050
 
-CMD ["sh", "-c", "python -m uvicorn src.server:server --host 0.0.0.0 --port ${PORT:-5050}"]
+CMD ["python", "docker_entrypoint.py"]

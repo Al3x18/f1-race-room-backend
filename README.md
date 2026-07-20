@@ -6,6 +6,7 @@ Python FastAPI backend for F1 PDF telemetry (legacy-compatible) and live timing,
 
 - Keeps legacy endpoints used by the existing client:
   - `GET /status`
+  - `GET /health`
   - `GET /get-telemetry`
   - `GET /get-telemetry-compare`
   - `GET /legacy/catalog/years`
@@ -25,7 +26,7 @@ Python FastAPI backend for F1 PDF telemetry (legacy-compatible) and live timing,
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 ## Environment Variables
@@ -42,9 +43,10 @@ LIVE_HEARTBEAT_SEC=10
 ALLOWED_ORIGINS=*
 TELEMETRY_CONFIG_FILE=./config/telemetry.toml
 TELEMETRY_MAX_CONCURRENCY=2
-TELEMETRY_MAX_PLOT_POINTS=1800
+TELEMETRY_MAX_PLOT_POINTS=1200
 TELEMETRY_CACHE_DIR=./telemetry_files_cache
-TELEMETRY_CACHE_MAX_DOCS=20
+TELEMETRY_CACHE_MAX_DOCS=100
+TELEMETRY_CACHE_MAX_MB=500
 PROVIDER=signalr
 PROVIDER_ORDER=signalr
 SIGNALR_CONNECTION_URL=wss://livetiming.formula1.com/signalrcore
@@ -121,8 +123,61 @@ curl -v "http://localhost:5050/get-telemetry-compare?year=2024&trackName=Monaco&
 - On request:
   - if cached file exists, server returns cache file (no FastF1 generation)
   - if missing, server generates via FastF1 and stores the file in cache
-- Cache keeps at most `cache_max_docs` documents (default `20`) and evicts least-recently-used by mtime.
+- PDFs are published atomically, so concurrent requests never see a partially-written document.
+- Cache keeps at most `cache_max_docs` documents (default `100`) and at most
+  `cache_max_mb` MiB (default `500`). It evicts least-recently-used files until
+  both limits are satisfied.
 - Logs explicitly show cache vs FastF1 path (`cache-hit`, `cache-miss generating-fastf1`).
+- `GET /telemetry/cache/status` reports the current document count and byte usage.
+
+## Railway Hobby deployment
+
+The PDF cache must be on a Railway Volume. The normal container filesystem is
+ephemeral and is replaced by a deploy.
+
+1. Deploy the repository as one Railway service. `railway.toml` selects the
+   Dockerfile and configures the public `/health` endpoint as the healthcheck.
+2. Add one Volume to the service and mount it at `/data`.
+3. The Docker image already contains these conservative defaults; add service
+   variables only if you want to override them:
+
+```env
+TELEMETRY_CACHE_DIR=/data/telemetry-pdfs
+TELEMETRY_CACHE_MAX_DOCS=100
+TELEMETRY_CACHE_MAX_MB=500
+TELEMETRY_MAX_CONCURRENCY=2
+TELEMETRY_MAX_PLOT_POINTS=1200
+```
+
+4. Keep one replica. Railway Volumes cannot be attached to multiple replicas.
+   The Docker entrypoint prepares the mounted directory as root and then runs
+   Uvicorn as the unprivileged `appuser`, so `RAILWAY_RUN_UID=0` is not needed.
+5. In Workspace Usage, configure an email alert below the included credit and
+   a Compute hard limit if the service must never exceed the chosen budget.
+6. Generate a public domain under Service > Settings > Networking.
+
+Recommended production-only variables:
+
+```env
+API_REQUEST_KEY=<LONG_RANDOM_SECRET>
+ALLOWED_ORIGINS=https://your-frontend.example
+SIGNALR_VERIFY_SSL=true
+```
+
+Do not commit the production secret. `/health` remains public for Railway;
+other API endpoints require the configured key. On Railway the container refuses
+to start if `API_REQUEST_KEY` is missing, still set to the example placeholder,
+or shorter than 32 characters. It also refuses `ALLOWED_ORIGINS=*`, an empty
+origin list, and the example frontend origin.
+
+For a bulk import, copy `railway.env.example`, replace its two placeholders,
+and import that file into Railway Variables. Do not import the local
+`.env.example`: its relative cache path is intentionally meant for local runs.
+
+The Hobby plan currently supports a 5 GB persistent Volume, so a 500 MiB PDF
+budget fits comfortably. Storage is billed by actual usage; CPU and RAM used by
+FastF1/matplotlib are more likely to dominate the bill. Serverless sleeping is
+not effective while the live provider keeps making outbound requests.
 
 Legacy catalog endpoints (for dynamic app dropdowns):
 
@@ -178,13 +233,15 @@ When `provider=openf1`, `timing` also includes:
 - In production:
   - keep `SIGNALR_VERIFY_SSL=true`
 - If telemetry PDF requests hit memory limits on small instances:
-  - set `TELEMETRY_MAX_CONCURRENCY=1` if you need to reduce concurrent peak RAM
-  - lower `TELEMETRY_MAX_PLOT_POINTS` (e.g. `1200`) to reduce chart memory usage
+  - with a 3 GB memory ceiling, `TELEMETRY_MAX_CONCURRENCY=2` allows at most
+    two cache-miss generations; use `1` again if Railway reports memory pressure
+  - keep `TELEMETRY_MAX_PLOT_POINTS=1200` or lower it to reduce chart memory usage
   - cache settings:
     - `TELEMETRY_CACHE_DIR` (default `./telemetry_files_cache`)
-    - `TELEMETRY_CACHE_MAX_DOCS=20` (evicts least recently used PDF by mtime)
+    - `TELEMETRY_CACHE_MAX_DOCS=100` (evicts least recently used PDF by mtime)
+    - `TELEMETRY_CACHE_MAX_MB=500` (total PDF cache ceiling in MiB)
   - quick config file:
-    - edit `config/telemetry.toml` (`max_concurrency`, `max_plot_points`, `cache_dir`, `cache_max_docs`)
+    - edit `config/telemetry.toml` (`max_concurrency`, `max_plot_points`, `cache_dir`, `cache_max_docs`, `cache_max_mb`)
     - optional override path with `TELEMETRY_CONFIG_FILE`
 
 ## Technical Documentation

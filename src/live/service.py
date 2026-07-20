@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from typing import Any, Dict, List
 
 from .aggregator import LiveAggregator
 from .providers import LiveProvider
+
+logger = logging.getLogger(__name__)
 
 
 class LiveService:
@@ -59,8 +62,9 @@ class LiveService:
                     error=None if index == 0 else "; ".join(errors),
                 )
                 return
-            except Exception as exc:
-                errors.append(f"{provider.name}: {exc}")
+            except Exception:
+                logger.exception("[live] provider failed name=%s", provider.name)
+                errors.append(f"{provider.name}: unavailable")
 
         await self._aggregator.mark_degraded(
             provider_name=self._providers[0].name,

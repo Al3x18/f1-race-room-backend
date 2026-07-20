@@ -26,13 +26,13 @@ from src.live import (
     UnofficialF1SignalRProvider,
 )
 from src.legacy_catalog import LegacyCatalogService
-from src.telemetry_cache import TelemetryPdfCache
+from src.telemetry_cache import MIB, TelemetryPdfCache
 from src.telemetry_runtime_config import TelemetryRuntimeConfig
 from src.send_telemetry_file import SendTelemetryFile
 from src.telemetry import Telemetry, TelemetryError
 
 logger = logging.getLogger(__name__)
-_PUBLIC_PATHS = {"/", "/favicon.ico"}
+_PUBLIC_PATHS = {"/", "/favicon.ico", "/health"}
 _PUBLIC_PREFIXES = ("/static/",)
 
 
@@ -121,6 +121,7 @@ def create_app(
     telemetry_cache = TelemetryPdfCache(
         cache_dir=telemetry_config.cache_dir,
         max_docs=telemetry_config.cache_max_docs,
+        max_bytes=telemetry_config.cache_max_mb * MIB,
     )
 
     if primary_provider is None and fallback_provider is None:
@@ -237,6 +238,14 @@ def create_app(
             "version": snapshot["version"],
         }
 
+    @server.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    @server.get("/telemetry/cache/status")
+    async def telemetry_cache_status():
+        return server.state.telemetry_pdf_cache.stats()
+
     @server.get("/get-telemetry")
     async def get_telemetry(
         year: Optional[int] = Query(default=None),
@@ -303,9 +312,18 @@ def create_app(
                         session,
                         driver_name,
                     )
-                    file_path = await asyncio.to_thread(telemetry.get_fl_telemetry, output_path)
-                    cache_manager.touch(file_path)
-                    cache_manager.enforce_limit()
+                    try:
+                        generated_path = await asyncio.to_thread(
+                            telemetry.get_fl_telemetry,
+                            output_path,
+                        )
+                        file_path = cache_manager.commit_output(
+                            cache_filename,
+                            generated_path,
+                        )
+                    except Exception:
+                        cache_manager.discard_output(output_path)
+                        raise
                     logger.info(
                         "[telemetry] generated-fastf1 single file=%s path=%s",
                         cache_filename,
@@ -314,8 +332,13 @@ def create_app(
             response = send_manager.send_file_from_path(file_path=file_path)
             return response
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            logger.exception("[telemetry] generated single PDF was not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Generated telemetry file not found.",
+            ) from exc
         except TelemetryError as exc:
+            logger.exception("[telemetry] single telemetry generation failed")
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -324,7 +347,11 @@ def create_app(
                 ),
             ) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"An error occurred: {exc}") from exc
+            logger.exception("[telemetry] unexpected single telemetry error")
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while generating telemetry.",
+            ) from exc
 
     @server.get("/get-telemetry-compare")
     async def get_telemetry_compare(
@@ -402,14 +429,20 @@ def create_app(
                         driver_a,
                         driver_b,
                     )
-                    file_path = await asyncio.to_thread(
-                        telemetry.get_comparison_telemetry_pdf,
-                        driver_a,
-                        driver_b,
-                        output_path,
-                    )
-                    cache_manager.touch(file_path)
-                    cache_manager.enforce_limit()
+                    try:
+                        generated_path = await asyncio.to_thread(
+                            telemetry.get_comparison_telemetry_pdf,
+                            driver_a,
+                            driver_b,
+                            output_path,
+                        )
+                        file_path = cache_manager.commit_output(
+                            cache_filename,
+                            generated_path,
+                        )
+                    except Exception:
+                        cache_manager.discard_output(output_path)
+                        raise
                     logger.info(
                         "[telemetry] generated-fastf1 compare file=%s path=%s",
                         cache_filename,
@@ -418,8 +451,13 @@ def create_app(
             response = send_manager.send_file_from_path(file_path=file_path)
             return response
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            logger.exception("[telemetry] generated comparison PDF was not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Generated telemetry file not found.",
+            ) from exc
         except TelemetryError as exc:
+            logger.exception("[telemetry] comparison telemetry generation failed")
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -428,7 +466,11 @@ def create_app(
                 ),
             ) from exc
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"An error occurred: {exc}") from exc
+            logger.exception("[telemetry] unexpected comparison telemetry error")
+            raise HTTPException(
+                status_code=500,
+                detail="An internal error occurred while generating telemetry.",
+            ) from exc
 
     @server.get("/legacy/catalog/events")
     async def legacy_catalog_events(
@@ -447,7 +489,11 @@ def create_app(
                 "events": events,
             }
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Could not load events for year {year}: {exc}") from exc
+            logger.exception("[legacy-catalog] event lookup failed year=%s", year)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not load events for year {year}.",
+            ) from exc
 
     @server.get("/legacy/catalog/years")
     async def legacy_catalog_years():
@@ -455,7 +501,11 @@ def create_app(
             years = await asyncio.to_thread(server.state.legacy_catalog_service.get_years)
             return {"years": years}
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Could not load available years: {exc}") from exc
+            logger.exception("[legacy-catalog] year lookup failed")
+            raise HTTPException(
+                status_code=400,
+                detail="Could not load available years.",
+            ) from exc
 
     @server.get("/legacy/catalog/drivers")
     async def legacy_catalog_drivers(
@@ -483,11 +533,17 @@ def create_app(
                 "drivers": drivers,
             }
         except Exception as exc:
+            logger.exception(
+                "[legacy-catalog] driver lookup failed year=%s track=%s session=%s",
+                year,
+                track_name,
+                session,
+            )
             raise HTTPException(
                 status_code=400,
                 detail=(
                     "Could not load driver catalog. "
-                    f"Please verify year/trackName/session values. Details: {exc}"
+                    "Please verify year/trackName/session values."
                 ),
             ) from exc
 

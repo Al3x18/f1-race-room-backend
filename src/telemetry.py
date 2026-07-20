@@ -30,7 +30,7 @@ class Telemetry:
         self.session = session
         self.driver_name = driver_name
         if max_plot_points is None:
-            self.max_plot_points = self._env_int("TELEMETRY_MAX_PLOT_POINTS", default=1800, minimum=300)
+            self.max_plot_points = self._env_int("TELEMETRY_MAX_PLOT_POINTS", default=1200, minimum=300)
         else:
             self.max_plot_points = max(300, int(max_plot_points))
 

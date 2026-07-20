@@ -67,6 +67,16 @@ Stack:
 - `SIGNALR_NO_AUTH` (default `true`)
 - `SIGNALR_ACCESS_TOKEN` (optional, for authenticated SignalR usage)
 - `SIGNALR_VERIFY_SSL` (default `true`; set `false` only for local SSL troubleshooting)
+- `TELEMETRY_MAX_CONCURRENCY` (default `2`; applies only to cache-miss generation)
+- `TELEMETRY_MAX_PLOT_POINTS` (default `1200`)
+- `TELEMETRY_CACHE_DIR` (default `./telemetry_files_cache`; use a persistent Volume in production)
+- `TELEMETRY_CACHE_MAX_DOCS` (default `100`)
+- `TELEMETRY_CACHE_MAX_MB` (default `500` MiB)
+
+The Docker entrypoint requires a private `API_REQUEST_KEY` of at least 32
+characters and an explicit non-placeholder `ALLOWED_ORIGINS` value when Railway
+environment markers are present. Local development can still leave the key
+empty and use `*`.
 
 OpenF1 auth behavior:
 
@@ -96,6 +106,12 @@ Possible `status` values:
 - `online`
 - `degraded`
 
+## `GET /health`
+
+Minimal public liveness endpoint used by Railway healthchecks. It always returns
+`{"status": "ok"}` after the ASGI application is ready; unlike `/status`, it
+does not expose live-provider state and is not API-key protected.
+
 ## `GET /get-telemetry`
 
 Legacy endpoint for PDF telemetry generation.
@@ -108,6 +124,9 @@ Query params:
 - `driverName` (string)
 
 Returns: PDF attachment (`application/pdf`).
+
+The generated document is cached under a deterministic filename. A cache hit
+does not load the FastF1 session or regenerate the matplotlib document.
 
 ## `GET /get-telemetry-compare`
 
@@ -128,6 +147,24 @@ Notes:
 - Speed, throttle, and brake are plotted in overlay mode (`driverA` vs `driverB`).
 - Corner numbers are shown under all three graphs when circuit corner metadata is available.
 - Speed chart includes corner-based speed annotations in km/h.
+- Comparison PDFs use the same persistent, count-and-size-limited cache as
+  single-driver PDFs.
+
+## `GET /telemetry/cache/status`
+
+Returns cache observability without reading PDF contents:
+
+```json
+{
+  "documents": 12,
+  "bytes": 7340032,
+  "max_documents": 100,
+  "max_bytes": 524288000
+}
+```
+
+Generated PDFs are staged outside the persistent cache and atomically published
+after completion. LRU eviction enforces both `max_documents` and `max_bytes`.
 
 ## `GET /legacy/catalog/events`
 
@@ -410,6 +447,8 @@ State handling tip:
 
 - During inactive sessions, `rows` may be empty and SSE may emit only heartbeats.
 - This is expected if upstream provider has no new live updates for the current session.
-- In provider failures, `/status` becomes `degraded` and `last_error` is populated.
+- In provider failures, `/status` becomes `degraded` and `last_error` contains
+  only a sanitized provider-unavailable message; internal exception details stay
+  in server logs.
 - With SignalR provider, malformed/truncated frames are skipped using a lenient parser to keep stream continuity.
 - If local SSL trust store is incomplete, SignalR can fail handshake unless `SIGNALR_VERIFY_SSL=false` is set for local development.

@@ -55,6 +55,11 @@ class DummyProvider:
         return {"session_key": session_key, "rows": []}
 
 
+class FailingLegacyCatalogService:
+    def get_years(self):
+        raise RuntimeError("internal path and credential must remain private")
+
+
 def build_settings():
     return AppSettings(
         openf1_base_url="https://api.openf1.org/v1",
@@ -95,6 +100,20 @@ def test_legacy_catalog_years_returns_year_list():
         assert response.status_code == 200
         body = response.json()
         assert body["years"] == [2023, 2024, 2025, 2026]
+
+
+def test_legacy_catalog_errors_do_not_expose_internal_exception():
+    app = create_app(
+        settings=build_settings(),
+        primary_provider=DummyProvider(),
+        legacy_catalog_service=FailingLegacyCatalogService(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/legacy/catalog/years")
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Could not load available years."
+        assert "credential" not in response.text
 
 
 def test_legacy_catalog_drivers_returns_driver_list():

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -9,6 +10,7 @@ import fastf1 as ff1
 
 
 _RUNTIME_CACHE_DIR = Path("/tmp/fastf1-cache")
+_FASTF1_CACHE_LOCK = threading.Lock()
 _KNOWN_CACHE_DIRS = (
     _RUNTIME_CACHE_DIR,
     Path("/tmp/fastf1-cache"),
@@ -35,10 +37,14 @@ def purge_fastf1_cache() -> None:
 
 @contextmanager
 def fastf1_cache_guard() -> Iterator[None]:
-    purge_fastf1_cache()
-    route_fastf1_cache_to_tmp()
-    try:
-        yield
-    finally:
+    # FastF1 cache configuration is process-global. Serializing this section
+    # prevents concurrent telemetry/catalog loads from disabling or deleting
+    # each other's temporary cache while still allowing PDF rendering to overlap.
+    with _FASTF1_CACHE_LOCK:
         purge_fastf1_cache()
-        disable_fastf1_cache()
+        route_fastf1_cache_to_tmp()
+        try:
+            yield
+        finally:
+            purge_fastf1_cache()
+            disable_fastf1_cache()

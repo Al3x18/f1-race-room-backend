@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   f1-race-room-backend:
     build:
@@ -20,3 +18,13 @@ services:
       SIGNALR_TIMEOUT_SEC: "8"
       SIGNALR_NO_AUTH: "true"
       SIGNALR_ACCESS_TOKEN: ""
+      TELEMETRY_MAX_CONCURRENCY: "2"
+      TELEMETRY_MAX_PLOT_POINTS: "1200"
+      TELEMETRY_CACHE_DIR: "/data/telemetry-pdfs"
+      TELEMETRY_CACHE_MAX_DOCS: "100"
+      TELEMETRY_CACHE_MAX_MB: "500"
+    volumes:
+      - telemetry-cache:/data
+
+volumes:
+  telemetry-cache:

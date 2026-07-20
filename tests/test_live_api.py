@@ -149,6 +149,9 @@ def test_status_returns_degraded_when_provider_fails():
         response = client.get("/status")
         assert response.status_code == 200
         assert response.json()["status"] == "degraded"
+        snapshot = client.get("/live/timing/snapshot").json()
+        assert "unavailable" in snapshot["last_error"]
+        assert "provider unavailable" not in snapshot["last_error"]
 
 
 def test_api_key_guard_blocks_missing_key_and_accepts_header_or_bearer():
@@ -162,6 +165,7 @@ def test_api_key_guard_blocks_missing_key_and_accepts_header_or_bearer():
 
     with TestClient(app) as client:
         assert client.get("/").status_code == 200
+        assert client.get("/health").status_code == 200
         assert client.get("/status").status_code == 401
         assert client.get("/status", headers={"X-API-Key": "wrong"}).status_code == 401
         assert client.get("/status", headers={"X-API-Key": "secret-key"}).status_code == 200

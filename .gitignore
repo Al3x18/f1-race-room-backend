@@ -9,8 +9,19 @@ venv/
 
 # Local environment files
 .env
+.env.*
+!.env.example
+
+# Private credentials and certificates
+*.key
+*.pem
+*.p12
+*.pfx
+credentials*.json
+secrets/
 
 # Runtime/generated artifacts
 custom_cache/
 telemetry_files/
+telemetry_files_cache/
 src/server_log/

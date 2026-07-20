@@ -5,10 +5,14 @@
 max_concurrency = 2
 
 # Max sampled points rendered in plots (higher = more detail, more RAM/CPU).
-max_plot_points = 1800
+max_plot_points = 1200
 
 # Folder where generated PDFs are cached.
 cache_dir = "./telemetry_files_cache"
 
 # Maximum number of cached PDF documents.
-cache_max_docs = 20
+cache_max_docs = 100
+
+# Maximum total size of cached PDFs in MiB. The oldest documents are evicted
+# until both this limit and cache_max_docs are respected.
+cache_max_mb = 500

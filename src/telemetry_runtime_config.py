@@ -11,9 +11,10 @@ import tomllib
 @dataclass(frozen=True)
 class TelemetryRuntimeConfig:
     max_concurrency: int = 2
-    max_plot_points: int = 1800
+    max_plot_points: int = 1200
     cache_dir: str = "./telemetry_files_cache"
-    cache_max_docs: int = 20
+    cache_max_docs: int = 100
+    cache_max_mb: int = 500
 
     @staticmethod
     def _parse_int(value: Any, default: int, minimum: int) -> int:
@@ -41,24 +42,39 @@ class TelemetryRuntimeConfig:
             except Exception:
                 file_data = {}
 
-        # File values are preferred for quick edits; env vars are fallback.
+        # Environment variables override the file so Railway can configure the
+        # mounted volume without modifying the image.
         max_concurrency = cls._parse_int(
-            file_data.get("max_concurrency", os.getenv("TELEMETRY_MAX_CONCURRENCY", 2)),
+            os.getenv("TELEMETRY_MAX_CONCURRENCY", file_data.get("max_concurrency", 2)),
             default=2,
             minimum=1,
         )
         max_plot_points = cls._parse_int(
-            file_data.get("max_plot_points", os.getenv("TELEMETRY_MAX_PLOT_POINTS", 1800)),
-            default=1800,
+            os.getenv("TELEMETRY_MAX_PLOT_POINTS", file_data.get("max_plot_points", 1200)),
+            default=1200,
             minimum=300,
         )
         cache_dir = cls._parse_str(
-            file_data.get("cache_dir", os.getenv("TELEMETRY_CACHE_DIR", "./telemetry_files_cache")),
+            os.getenv(
+                "TELEMETRY_CACHE_DIR",
+                file_data.get("cache_dir", "./telemetry_files_cache"),
+            ),
             default="./telemetry_files_cache",
         )
         cache_max_docs = cls._parse_int(
-            file_data.get("cache_max_docs", os.getenv("TELEMETRY_CACHE_MAX_DOCS", 20)),
-            default=20,
+            os.getenv(
+                "TELEMETRY_CACHE_MAX_DOCS",
+                file_data.get("cache_max_docs", 100),
+            ),
+            default=100,
+            minimum=1,
+        )
+        cache_max_mb = cls._parse_int(
+            os.getenv(
+                "TELEMETRY_CACHE_MAX_MB",
+                file_data.get("cache_max_mb", 500),
+            ),
+            default=500,
             minimum=1,
         )
 
@@ -67,4 +83,5 @@ class TelemetryRuntimeConfig:
             max_plot_points=max_plot_points,
             cache_dir=cache_dir,
             cache_max_docs=cache_max_docs,
+            cache_max_mb=cache_max_mb,
         )
