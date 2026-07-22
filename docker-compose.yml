@@ -6,23 +6,15 @@ services:
     ports:
       - "5050:5050"
     environment:
-      OPENF1_BASE_URL: "https://api.openf1.org/v1"
-      OPENF1_API_KEY: ""
-      LIVE_POLL_MS: "800"
-      LIVE_HEARTBEAT_SEC: "10"
-      ALLOWED_ORIGINS: "*"
-      PROVIDER: "signalr"
-      PROVIDER_ORDER: "signalr"
-      SIGNALR_CONNECTION_URL: "wss://livetiming.formula1.com/signalrcore"
-      SIGNALR_NEGOTIATE_URL: "https://livetiming.formula1.com/signalrcore/negotiate"
-      SIGNALR_TIMEOUT_SEC: "8"
-      SIGNALR_NO_AUTH: "true"
-      SIGNALR_ACCESS_TOKEN: ""
-      TELEMETRY_MAX_CONCURRENCY: "2"
-      TELEMETRY_MAX_PLOT_POINTS: "1200"
+      API_REQUEST_KEY: "${API_REQUEST_KEY:-}"
+      API_KEY_HEADER: "${API_KEY_HEADER:-X-API-Key}"
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-*}"
+      TELEMETRY_CONFIG_FILE: "${TELEMETRY_CONFIG_FILE:-./config/telemetry.toml}"
+      TELEMETRY_MAX_CONCURRENCY: "${TELEMETRY_MAX_CONCURRENCY:-2}"
+      TELEMETRY_MAX_PLOT_POINTS: "${TELEMETRY_MAX_PLOT_POINTS:-1200}"
       TELEMETRY_CACHE_DIR: "/data/telemetry-pdfs"
-      TELEMETRY_CACHE_MAX_DOCS: "100"
-      TELEMETRY_CACHE_MAX_MB: "500"
+      TELEMETRY_CACHE_MAX_DOCS: "${TELEMETRY_CACHE_MAX_DOCS:-100}"
+      TELEMETRY_CACHE_MAX_MB: "${TELEMETRY_CACHE_MAX_MB:-500}"
     volumes:
       - telemetry-cache:/data
 

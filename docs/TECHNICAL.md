@@ -1,454 +1,208 @@
-# Technical Documentation - F1 Live Timing Server
+# Technical Documentation
 
-## Overview
+## Runtime scope
 
-This backend exposes two groups of APIs:
+The application is a telemetry-only FastAPI service. Startup performs local
+configuration and cache initialization only. There are no background tasks,
+provider warmups, SignalR connections, OpenF1 authentication calls, periodic
+polling loops, or SSE streams.
 
-- Legacy APIs used by the existing client (`/status`, `/get-telemetry`, `/get-telemetry-compare`)
-- Legacy catalog APIs for FastF1 parameter discovery (`/legacy/catalog/*`)
-- Live timing APIs for real-time integration (`/live/*`)
+FastF1 is invoked only by:
 
-Stack:
+- catalog requests under `/legacy/catalog/*`
+- uncached requests to `/get-telemetry`
+- uncached requests to `/get-telemetry-compare`
 
-- FastAPI (ASGI)
-- Provider architecture (`UnofficialF1SignalRProvider`, `OpenF1Provider`)
-- In-memory async-safe state (`LiveAggregator`) with incremental `version`
-- Server-Sent Events (SSE) broadcaster with heartbeat
+## Components
 
-## Runtime Architecture
+- `src/server.py` — FastAPI routes, authentication, concurrency coordination
+- `src/app_settings.py` — API key and CORS settings
+- `src/legacy_catalog.py` — FastF1 event/session/driver discovery
+- `src/telemetry.py` — telemetry loading and PDF chart generation
+- `src/telemetry_cache.py` — deterministic names, atomic publication, LRU limits
+- `src/telemetry_runtime_config.py` — TOML and environment configuration
+- `src/fastf1_cache.py` — process-wide FastF1 cache coordination
+- `src/send_telemetry_file.py` — PDF file responses
+- `docker_entrypoint.py` — persistent-volume preparation and privilege drop
 
-### Main components
+## Startup sequence
 
-- `src/server.py`
-  - App creation, routing, lifespan startup/shutdown
-  - Starts polling service on startup
-- `src/live/settings.py`
-  - Loads environment configuration
-- `src/live/providers.py`
-  - `OpenF1Provider`: source from OpenF1 (API key required for live)
-- `src/live/signalr_provider.py`
-  - `UnofficialF1SignalRProvider`: unofficial live source via SignalR stream
-- `src/live/service.py`
-  - Polling orchestration and fallback logic
-- `src/live/aggregator.py`
-  - Canonical in-memory state + version management
-- `src/live/sse.py`
-  - SSE stream encoder and publisher (`update`, `heartbeat`)
+1. Read `AppSettings` from the environment.
+2. Load `TelemetryRuntimeConfig` from TOML and environment overrides.
+3. Create the PDF cache directory and enforce document/size limits.
+4. Register HTTP middleware and telemetry/catalog routes.
+5. Start one Uvicorn worker on the configured `PORT`.
 
-### Data flow
+No external HTTP or WebSocket connection occurs during startup or while the
+service is idle.
 
-1. `LiveService` polls provider chain every `LIVE_POLL_MS`.
-2. It tries providers in `PROVIDER_ORDER` until one returns valid data.
-3. New payload is merged into `LiveAggregator`.
-4. If payload changed, `version` increments and listeners are notified.
-5. `/live/timing/stream` emits:
-   - `event: update` only when `version` changes
-   - `event: heartbeat` every `LIVE_HEARTBEAT_SEC` when no changes
-6. If first provider fails but a fallback works:
-   - response provider changes
-   - status becomes `degraded`
+## Public routes
 
-## Environment Variables
+### `GET /`
 
-- `OPENF1_BASE_URL` (default `https://api.openf1.org/v1`)
-- `OPENF1_API_KEY` (optional static bearer token)
-- `OPENF1_USERNAME` (optional, used for auth flow if API key is not set)
-- `OPENF1_PASSWORD` (optional, used for auth flow if API key is not set)
-- `OPENF1_TOKEN_URL` (default `https://api.openf1.org/token`)
-- `OPENF1_TOKEN_REFRESH_SEC` (default `120`, refresh margin before expiry)
-- `LIVE_POLL_MS` (default `800`)
-- `LIVE_HEARTBEAT_SEC` (default `10`)
-- `ALLOWED_ORIGINS` (default `*`, comma-separated)
-- `PROVIDER` (default `signalr`)
-- `PROVIDER_ORDER` (comma-separated chain, example `signalr` or `signalr,openf1`)
-- `SIGNALR_CONNECTION_URL` (default `wss://livetiming.formula1.com/signalrcore`)
-- `SIGNALR_NEGOTIATE_URL` (default `https://livetiming.formula1.com/signalrcore/negotiate`)
-- `SIGNALR_TIMEOUT_SEC` (default `8`)
-- `SIGNALR_NO_AUTH` (default `true`)
-- `SIGNALR_ACCESS_TOKEN` (optional, for authenticated SignalR usage)
-- `SIGNALR_VERIFY_SSL` (default `true`; set `false` only for local SSL troubleshooting)
-- `TELEMETRY_MAX_CONCURRENCY` (default `2`; applies only to cache-miss generation)
-- `TELEMETRY_MAX_PLOT_POINTS` (default `1200`)
-- `TELEMETRY_CACHE_DIR` (default `./telemetry_files_cache`; use a persistent Volume in production)
-- `TELEMETRY_CACHE_MAX_DOCS` (default `100`)
-- `TELEMETRY_CACHE_MAX_MB` (default `500` MiB)
+Renders a static telemetry usage page. It contains no JavaScript and performs no
+API calls.
 
-The Docker entrypoint requires a private `API_REQUEST_KEY` of at least 32
-characters when Railway environment markers are present. `ALLOWED_ORIGINS=*`
-remains supported for native mobile clients; browser deployments should use an
-explicit frontend origin.
+### `GET /health`
 
-OpenF1 auth behavior:
+Returns:
 
-- If `OPENF1_API_KEY` is set, it is used directly as bearer token.
-- Otherwise, if `OPENF1_USERNAME` and `OPENF1_PASSWORD` are set, the server requests an access token from `OPENF1_TOKEN_URL`.
-- Access token is refreshed automatically before the nominal 1-hour expiration.
+```json
+{"status": "ok"}
+```
 
-## API Reference
+This endpoint is intentionally public for deployment healthchecks.
 
-## `GET /status`
+## Protected service routes
 
-Health snapshot used by legacy clients.
+### `GET /status`
 
-Example response:
+Returns local service information only:
 
 ```json
 {
-  "status": "online",
-  "provider": "signalr",
-  "version": 12
+  "status": "ok",
+  "service": "telemetry",
+  "version": "1.2.0"
 }
 ```
 
-Possible `status` values:
+### `GET /telemetry/cache/status`
 
-- `starting`
-- `online`
-- `degraded`
-
-## `GET /health`
-
-Minimal public liveness endpoint used by Railway healthchecks. It always returns
-`{"status": "ok"}` after the ASGI application is ready; unlike `/status`, it
-does not expose live-provider state and is not API-key protected.
-
-## `GET /get-telemetry`
-
-Legacy endpoint for PDF telemetry generation.
-
-Query params:
-
-- `year` (int)
-- `trackName` (string)
-- `session` (string)
-- `driverName` (string)
-
-Returns: PDF attachment (`application/pdf`).
-
-The generated document is cached under a deterministic filename. A cache hit
-does not load the FastF1 session or regenerate the matplotlib document.
-
-## `GET /get-telemetry-compare`
-
-Legacy endpoint for comparative PDF telemetry generation (two drivers, overlaid charts).
-
-Query params:
-
-- `year` (int)
-- `trackName` (string)
-- `session` (string)
-- `driverA` (string)
-- `driverB` (string)
-
-Returns: PDF attachment (`application/pdf`).
-
-Notes:
-
-- Speed, throttle, and brake are plotted in overlay mode (`driverA` vs `driverB`).
-- Corner numbers are shown under all three graphs when circuit corner metadata is available.
-- Speed chart includes corner-based speed annotations in km/h.
-- Comparison PDFs use the same persistent, count-and-size-limited cache as
-  single-driver PDFs.
-
-## `GET /telemetry/cache/status`
-
-Returns cache observability without reading PDF contents:
+Example:
 
 ```json
 {
-  "documents": 12,
-  "bytes": 7340032,
+  "documents": 24,
+  "bytes": 128450304,
   "max_documents": 100,
   "max_bytes": 524288000
 }
 ```
 
-Generated PDFs are staged outside the persistent cache and atomically published
-after completion. LRU eviction enforces both `max_documents` and `max_bytes`.
+## Catalog routes
 
-## `GET /legacy/catalog/events`
+### `GET /legacy/catalog/years`
 
-Returns available events and sessions for a given year from FastF1 schedule.
+Returns seasons supported by the FastF1 schedule source.
 
-Query params:
+### `GET /legacy/catalog/events?year=2024`
 
-- `year` (int, required)
+Returns events with round, location, date and available session codes.
 
-Example response:
+### `GET /legacy/catalog/drivers`
 
-```json
-{
-  "year": 2024,
-  "events": [
-    {
-      "round_number": 8,
-      "event_name": "Monaco Grand Prix",
-      "official_event_name": "FORMULA 1 GRAND PRIX DE MONACO 2024",
-      "country": "Monaco",
-      "location": "Monte Carlo",
-      "event_format": "conventional",
-      "event_date": "2024-05-26T00:00:00+00:00",
-      "sessions": [
-        {"name": "Practice 1", "code": "FP1", "date": "2024-05-24T11:30:00+00:00"},
-        {"name": "Qualifying", "code": "Q", "date": "2024-05-25T15:00:00+00:00"},
-        {"name": "Race", "code": "R", "date": "2024-05-26T13:00:00+00:00"}
-      ]
-    }
-  ]
-}
-```
+Required query parameters:
 
-## `GET /legacy/catalog/drivers`
+- `year`
+- `trackName`
+- `session`
 
-Returns available drivers for a specific year/event/session (telemetry readiness).
+Returns driver code, number, name, team and telemetry availability.
 
-Query params:
+Event and driver results are kept in an in-memory cache for `300` seconds to
+avoid repeating FastF1 work during normal client selection flows. The year list
+is computed from the available schedules on each `/legacy/catalog/years`
+request and is not stored in that TTL cache.
 
-- `year` (int, required)
-- `trackName` (string, required)
-- `session` (string, required)
+## PDF routes
 
-Example response:
+### `GET /get-telemetry`
 
-```json
-{
-  "year": 2024,
-  "track_name": "Monaco",
-  "session": "Q",
-  "drivers": [
-    {
-      "driver_code": "VER",
-      "driver_number": "1",
-      "full_name": "Max Verstappen",
-      "team_name": "Red Bull Racing",
-      "available_telemetry": true
-    }
-  ]
-}
-```
+Required query parameters:
 
-Notes:
+- `year`
+- `trackName`
+- `session`
+- `driverName`
 
-- `available_telemetry=true` indicates the driver appears in loaded laps for that session.
-- Use this endpoint to avoid client hardcoded driver lists.
+### `GET /get-telemetry-compare`
 
-## `GET /legacy/catalog/years`
+Required query parameters:
 
-Returns years where FastF1 schedule data is available.
+- `year`
+- `trackName`
+- `session`
+- `driverA`
+- `driverB`
 
-Example response:
+Both routes return `application/pdf` with an attachment filename.
 
-```json
-{
-  "years": [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
-}
-```
+## Cache and concurrency flow
 
-## `GET /live/session/current`
+1. Normalize request parameters into a deterministic filename.
+2. Check the persistent PDF cache before acquiring a generation slot.
+3. On a hit, touch the file for LRU ordering and return it immediately.
+4. On a miss, acquire a per-document lock.
+5. Check the cache again in case another request completed the same PDF.
+6. Acquire the global telemetry semaphore only when generation is still needed.
+7. Generate into a temporary staging path.
+8. Verify the PDF header, reserve cache space and publish atomically.
+9. Evict least-recently-used files until both configured limits are satisfied.
 
-Returns session metadata currently cached in memory.
+Consequences:
 
-Example response:
+- cache hits do not consume FastF1 generation concurrency
+- duplicate concurrent requests generate one PDF
+- clients never receive partially generated files
+- the cache respects both count and byte limits
 
-```json
-{
-  "version": 12,
-  "provider": "signalr",
-  "status": "online",
-  "session": {
-    "session_key": 11467,
-    "session_name": "Day 3",
-    "meeting_key": 1304,
-    "meeting_name": null,
-    "country_name": "Bahrain",
-    "date_start": "2026-02-13T07:00:00+00:00",
-    "date_end": "2026-02-13T16:00:00+00:00"
-  }
-}
-```
+The semaphore limits complete cache-miss generation tasks. FastF1 cache/session
+setup is additionally protected by a process-wide lock because FastF1 cache
+configuration is global. Session loads are therefore serialized, while plot
+rendering can overlap up to `TELEMETRY_MAX_CONCURRENCY`.
 
-## `GET /live/timing/snapshot`
+## Configuration precedence
 
-Full in-memory snapshot.
+Defaults are defined in `config/telemetry.toml`. If
+`TELEMETRY_CONFIG_FILE` points to another file, it is used instead. Environment
+variables override values loaded from the file.
 
-Example response:
+| Variable | Default | Valid input |
+| --- | --- | --- |
+| `API_REQUEST_KEY` | empty | Any string; a non-empty value enables authentication |
+| `API_KEY_HEADER` | `X-API-Key` | Non-empty header name |
+| `ALLOWED_ORIGINS` | `*` | `*` or comma-separated origins |
+| `TELEMETRY_CONFIG_FILE` | `./config/telemetry.toml` | File path |
+| `TELEMETRY_MAX_CONCURRENCY` | `2` | Integer `>= 1` |
+| `TELEMETRY_MAX_PLOT_POINTS` | `1200` | Integer `>= 300` |
+| `TELEMETRY_CACHE_DIR` | `./telemetry_files_cache` | Directory path |
+| `TELEMETRY_CACHE_MAX_DOCS` | `100` | Integer `>= 1` |
+| `TELEMETRY_CACHE_MAX_MB` | `500` | Integer `>= 1` |
 
-```json
-{
-  "version": 12,
-  "provider": "signalr",
-  "status": "online",
-  "current_session": {"session_key": 11467},
-  "timing": {"session_key": 11467, "rows": []},
-  "last_error": null,
-  "last_updated": "2026-02-17T21:40:48.028728+00:00"
-}
-```
+Invalid integer values fall back to their defaults instead of preventing
+startup. Docker Compose interpolates API, CORS and integer settings from the
+local `.env` file. It fixes `TELEMETRY_CACHE_DIR` to
+`/data/telemetry-pdfs` so the named Volume is always used.
 
-Each `timing.rows[]` item contains consolidated per-driver data:
+## Authentication
 
-```json
-{
-  "driver_number": 1,
-  "driver": {
-    "name_acronym": "VER",
-    "broadcast_name": "M VERSTAPPEN",
-    "full_name": "Max Verstappen",
-    "first_name": "Max",
-    "last_name": "Verstappen",
-    "country_code": "NED",
-    "team_name": "Red Bull Racing",
-    "team_colour": "3671C6",
-    "headshot_url": "https://..."
-  },
-  "position": 1,
-  "gap_to_leader": 0,
-  "interval": 0,
-  "is_in_pit": false,
-  "lap": {
-    "lap_number": 14,
-    "lap_duration": 92.123,
-    "last_lap_duration": 92.123,
-    "best_lap_duration": 91.887,
-    "best_lap_number": 12,
-    "best_lap_date_start": "2026-02-18T12:16:01+00:00",
-    "sector_1": 30.101,
-    "sector_2": 31.222,
-    "sector_3": 30.800,
-    "i1_speed": 280,
-    "i2_speed": 300,
-    "st_speed": 330,
-    "is_personal_best": true,
-    "microsectors_1": [2048, 2048, 2049],
-    "microsectors_1_labels": ["slower", "slower", "improved"],
-    "microsectors_2": [2051, 2048, 2048],
-    "microsectors_2_labels": ["best_overall", "slower", "slower"],
-    "microsectors_3": [2048, 2048, 2050],
-    "microsectors_3_labels": ["slower", "slower", "unknown"],
-    "is_pit_out_lap": false,
-    "date_start": "2026-02-18T12:20:01+00:00"
-  },
-  "tyre": {
-    "compound": "SOFT",
-    "stint_number": 2,
-    "lap_start": 11,
-    "lap_end": null,
-    "tyre_age_at_start": 0,
-    "laps_on_current_tyre": 4
-  },
-  "pit": {
-    "last_pit_lap": 10,
-    "last_pit_date": "2026-02-18T12:18:00+00:00",
-    "lane_duration": 18.3,
-    "stop_duration": 2.4
-  },
-  "car": {
-    "speed": 305,
-    "throttle": 98,
-    "brake": 0,
-    "rpm": 11930,
-    "n_gear": 8,
-    "drs": 12,
-    "date": "2026-02-18T12:20:39.901000+00:00"
-  },
-  "location": {
-    "x": 1234.5,
-    "y": 678.9,
-    "z": 2.0,
-    "date": "2026-02-18T12:20:39.901000+00:00"
-  },
-  "date": "2026-02-18T12:20:40+00:00"
-}
-```
+When `API_REQUEST_KEY` is non-empty, protected routes accept either the header
+configured by `API_KEY_HEADER` or `Authorization: Bearer <key>`. Key comparison
+uses `secrets.compare_digest`.
 
-Notes:
+Unauthorized requests receive `401` without exposing the expected key. Internal
+exceptions are logged server-side and sanitized before being returned.
 
-- `is_in_pit` is heuristic (derived from latest pit/lap updates).
-- Some fields can be `null` when upstream source is missing that metric.
-- With `provider=openf1`, `timing.openf1_extras` includes:
-  - `weather`: latest weather sample
-  - `race_control_messages`: latest 50 race control items
-  - `team_radio_messages`: latest 30 team radio items
-  - `overtakes`: latest 30 overtakes
-  - `counts`: source counters (`drivers`, `positions`, `laps`, `car_data`, etc.)
+Missing application query parameters return `400`. A query parameter with an
+invalid FastAPI type, such as a non-integer `year`, returns `422`. Telemetry data
+that cannot be loaded returns `400`; an unexpected generation error returns
+`500`. A generated file that disappears before it can be sent returns `404`.
 
-## `GET /live/timing/stream` (SSE)
+## Container deployment
 
-Content type: `text/event-stream`
+- Builder: Dockerfile
+- Healthcheck: `/health`
+- Worker count: `1`
+- Persistent volume mount: `/data`
+- PDF directory: `/data/telemetry-pdfs`
+- Runtime user: `appuser` after volume ownership is prepared
 
-Events:
+The entrypoint prepares ownership of the mounted cache directory and then drops
+privileges before starting Uvicorn. Keep one replica with a locally attached
+cache volume so in-process per-document locks and LRU state remain coordinated.
+The application itself enforces the `500 MiB` and `100` document defaults.
 
-- `update`: emitted only on version changes
-- `heartbeat`: emitted every heartbeat interval when there are no changes
-
-Example stream:
-
-```text
-event: heartbeat
-data: {"version":12,"ts":"2026-02-17T21:41:55.731256+00:00"}
-
-event: update
-data: {"version":13,"provider":"signalr",...}
-```
-
-## `POST /live/reload`
-
-Triggers one immediate poll cycle and returns latest snapshot.
-
-Use case:
-
-- manual refresh from client
-- diagnostics during development
-
-## Local Development
-
-## Run with virtualenv
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn src.server:server --host 0.0.0.0 --port 5050 --env-file .env
-```
-
-## Run with Docker
-
-```bash
-docker compose up --build
-```
-
-## Smoke test
-
-```bash
-curl -s http://localhost:5050/status | jq
-curl -s http://localhost:5050/live/session/current | jq
-curl -s http://localhost:5050/live/timing/snapshot | jq
-curl -N http://localhost:5050/live/timing/stream
-curl -s -X POST http://localhost:5050/live/reload | jq
-```
-
-## Flutter Integration Notes
-
-Recommended client strategy:
-
-1. Call `/live/timing/snapshot` on app start to seed UI.
-2. Open SSE on `/live/timing/stream`.
-3. On `event: update`, parse payload and refresh state.
-4. On `heartbeat`, keep connection alive (no UI update required).
-5. If connection drops, reconnect with exponential backoff.
-6. Optionally call `/live/reload` on resume/foreground.
-
-State handling tip:
-
-- Track last `version` in Flutter state.
-- Ignore updates with version `<=` current version.
-
-## Known Behavior
-
-- During inactive sessions, `rows` may be empty and SSE may emit only heartbeats.
-- This is expected if upstream provider has no new live updates for the current session.
-- In provider failures, `/status` becomes `degraded` and `last_error` contains
-  only a sanitized provider-unavailable message; internal exception details stay
-  in server logs.
-- With SignalR provider, malformed/truncated frames are skipped using a lenient parser to keep stream continuity.
-- If local SSL trust store is incomplete, SignalR can fail handshake unless `SIGNALR_VERIFY_SSL=false` is set for local development.
+Only user-triggered catalog queries and cache misses create upstream FastF1
+traffic. An idle deployment should produce no recurring provider errors or
+outbound requests.

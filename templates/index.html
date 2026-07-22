@@ -150,7 +150,7 @@
                     <span class="step-number">03</span>
                     <div>
                         <h3>Seleziona i piloti</h3>
-                        <p>Carica l’elenco dei piloti con telemetria disponibile per quella sessione.</p>
+                        <p>Carica i piloti e verifica per ciascuno la disponibilità della telemetria.</p>
                         <code>GET /legacy/catalog/drivers</code>
                     </div>
                 </li>
@@ -173,8 +173,8 @@
                 </div>
                 <h2>Analisi individuale</h2>
                 <p>
-                    Un report completo del giro più veloce con velocità, acceleratore,
-                    freno, marcia, RPM, DRS e riferimenti alle curve.
+                    Un report del giro più veloce con velocità, acceleratore,
+                    freno, statistiche riepilogative e riferimenti alle curve.
                 </p>
                 <ul>
                     <li>Tracce sincronizzate sulla distanza</li>
@@ -240,7 +240,7 @@
                     <div>
                         <span class="branch-label miss">Cache miss</span>
                         <strong>Generazione PDF</strong>
-                        <small>Massimo {{ max_concurrency }} richieste simultanee</small>
+                        <small>Massimo {{ max_concurrency }} generazioni simultanee</small>
                     </div>
                 </div>
             </div>
@@ -248,7 +248,7 @@
             <div class="cache-notes">
                 <p><strong>Politica LRU.</strong> I file usati meno recentemente vengono eliminati quando uno dei due limiti viene superato.</p>
                 <p><strong>Pubblicazione atomica.</strong> Un PDF diventa disponibile soltanto dopo che la generazione è terminata correttamente.</p>
-                <p><strong>Persistenza Railway.</strong> La directory deve essere montata su un Volume per conservare i file tra deploy e riavvii.</p>
+                <p><strong>Persistenza.</strong> La directory deve essere montata su un volume persistente per conservare i file tra deploy e riavvii.</p>
             </div>
         </section>
 
@@ -299,7 +299,7 @@
                     <tbody>
                         <tr><td><code>year</code></td><td>Intero</td><td>2024</td><td>Stagione del campionato</td></tr>
                         <tr><td><code>trackName</code></td><td>Testo</td><td>Monaco</td><td>Nome evento o circuito FastF1</td></tr>
-                        <tr><td><code>session</code></td><td>Codice</td><td>Q</td><td>FP1, FP2, FP3, Q, SQ, S oppure R</td></tr>
+                        <tr><td><code>session</code></td><td>Codice</td><td>Q</td><td>FP1, FP2, FP3, Q, SQ, SS, S oppure R</td></tr>
                         <tr><td><code>driverName</code></td><td>Codice</td><td>VER</td><td>Pilota del report individuale</td></tr>
                         <tr><td><code>driverA / driverB</code></td><td>Codice</td><td>VER / LEC</td><td>Piloti del confronto</td></tr>
                     </tbody>
