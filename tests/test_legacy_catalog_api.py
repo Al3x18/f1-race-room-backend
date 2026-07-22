@@ -45,16 +45,6 @@ class FakeLegacyCatalogService:
         ]
 
 
-class DummyProvider:
-    name = "dummy"
-
-    async def fetch_current_session(self):
-        return {"session_key": None, "session_name": "offline"}
-
-    async def fetch_timing_snapshot(self, session_key=None):
-        return {"session_key": session_key, "rows": []}
-
-
 class FailingLegacyCatalogService:
     def get_years(self):
         raise RuntimeError("internal path and credential must remain private")
@@ -62,19 +52,13 @@ class FailingLegacyCatalogService:
 
 def build_settings():
     return AppSettings(
-        openf1_base_url="https://api.openf1.org/v1",
-        openf1_api_key="",
-        live_poll_ms=100000,
-        live_heartbeat_sec=10,
         allowed_origins=["*"],
-        provider="signalr",
     )
 
 
 def test_legacy_catalog_events_returns_event_list():
     app = create_app(
         settings=build_settings(),
-        primary_provider=DummyProvider(),
         legacy_catalog_service=FakeLegacyCatalogService(),
     )
 
@@ -91,7 +75,6 @@ def test_legacy_catalog_events_returns_event_list():
 def test_legacy_catalog_years_returns_year_list():
     app = create_app(
         settings=build_settings(),
-        primary_provider=DummyProvider(),
         legacy_catalog_service=FakeLegacyCatalogService(),
     )
 
@@ -105,7 +88,6 @@ def test_legacy_catalog_years_returns_year_list():
 def test_legacy_catalog_errors_do_not_expose_internal_exception():
     app = create_app(
         settings=build_settings(),
-        primary_provider=DummyProvider(),
         legacy_catalog_service=FailingLegacyCatalogService(),
     )
 
@@ -119,7 +101,6 @@ def test_legacy_catalog_errors_do_not_expose_internal_exception():
 def test_legacy_catalog_drivers_returns_driver_list():
     app = create_app(
         settings=build_settings(),
-        primary_provider=DummyProvider(),
         legacy_catalog_service=FakeLegacyCatalogService(),
     )
 

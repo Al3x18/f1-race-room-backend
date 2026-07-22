@@ -5,26 +5,18 @@ import json
 import logging
 import os
 import secrets
-from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from src.app_settings import AppSettings
-from src.live import (
-    LiveAggregator,
-    LiveService,
-    OpenF1Provider,
-    SSEBroadcaster,
-    UnofficialF1SignalRProvider,
-)
 from src.legacy_catalog import LegacyCatalogService
 from src.telemetry_cache import MIB, TelemetryPdfCache
 from src.telemetry_runtime_config import TelemetryRuntimeConfig
@@ -34,14 +26,6 @@ from src.telemetry import Telemetry, TelemetryError
 logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = {"/", "/favicon.ico", "/health"}
 _PUBLIC_PREFIXES = ("/static/",)
-
-
-def _default_provider_order(provider: str):
-    mapping = {
-        "signalr": ["signalr"],
-        "openf1": ["openf1", "signalr"],
-    }
-    return mapping.get(provider, ["signalr"])
 
 
 def _read_app_version(base_dir: Path) -> str:
@@ -65,58 +49,11 @@ def _extract_request_api_key(request: Request, header_name: str) -> str:
     return ""
 
 
-def _build_providers(settings: AppSettings):
-    openf1_provider = OpenF1Provider(
-        base_url=settings.openf1_base_url,
-        api_key=settings.openf1_api_key,
-        username=settings.openf1_username,
-        password=settings.openf1_password,
-        token_url=settings.openf1_token_url,
-        token_refresh_sec=settings.openf1_token_refresh_sec,
-        verify_ssl=True,
-    )
-    signalr_provider = UnofficialF1SignalRProvider(
-        connection_url=settings.signalr_connection_url,
-        negotiate_url=settings.signalr_negotiate_url,
-        timeout_sec=settings.signalr_timeout_sec,
-        no_auth=settings.signalr_no_auth,
-        access_token=settings.signalr_access_token,
-        verify_ssl=settings.signalr_verify_ssl,
-    )
-
-    registry = {
-        "openf1": openf1_provider,
-        "signalr": signalr_provider,
-    }
-
-    order = settings.provider_order or _default_provider_order(settings.provider)
-    resolved = []
-    seen = set()
-    for name in order:
-        if name == "openf1" and not (
-            settings.openf1_api_key
-            or (settings.openf1_username and settings.openf1_password)
-        ):
-            continue
-        provider = registry.get(name)
-        if provider and name not in seen:
-            resolved.append(provider)
-            seen.add(name)
-
-    if not resolved:
-        resolved = [signalr_provider]
-
-    return resolved
-
-
 def create_app(
     settings: Optional[AppSettings] = None,
-    primary_provider=None,
-    fallback_provider=None,
     legacy_catalog_service: Optional[LegacyCatalogService] = None,
 ) -> FastAPI:
     app_settings = settings or AppSettings.from_env()
-    aggregator = LiveAggregator()
     telemetry_config = TelemetryRuntimeConfig.load()
     telemetry_cache = TelemetryPdfCache(
         cache_dir=telemetry_config.cache_dir,
@@ -124,41 +61,7 @@ def create_app(
         max_bytes=telemetry_config.cache_max_mb * MIB,
     )
 
-    if primary_provider is None and fallback_provider is None:
-        providers = _build_providers(app_settings)
-    else:
-        providers = []
-        if primary_provider is not None:
-            providers.append(primary_provider)
-        if fallback_provider is not None:
-            providers.append(fallback_provider)
-
-    live_service = LiveService(
-        aggregator=aggregator,
-        providers=providers,
-        poll_ms=app_settings.live_poll_ms,
-    )
-    sse_broadcaster = SSEBroadcaster(
-        aggregator=aggregator,
-        heartbeat_sec=app_settings.live_heartbeat_sec,
-    )
-
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        for provider in providers:
-            warmup = getattr(provider, "warmup", None)
-            if callable(warmup):
-                try:
-                    await warmup()
-                except Exception:
-                    # Fallback providers are handled by LiveService polling logic.
-                    pass
-        await live_service.start()
-        await live_service.reload()
-        yield
-        await live_service.stop()
-
-    server = FastAPI(title="F1 Race Room Backend", lifespan=lifespan)
+    server = FastAPI(title="F1 Race Room Telemetry Backend")
     server.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     base_dir = Path(__file__).resolve().parent.parent
@@ -175,9 +78,6 @@ def create_app(
     )
 
     server.state.settings = app_settings
-    server.state.aggregator = aggregator
-    server.state.live_service = live_service
-    server.state.sse_broadcaster = sse_broadcaster
     server.state.legacy_catalog_service = legacy_catalog_service or LegacyCatalogService()
     server.state.app_version = app_version
     server.state.telemetry_config = telemetry_config
@@ -217,9 +117,9 @@ def create_app(
     async def index(request: Request):
         settings = server.state.settings
         return templates.TemplateResponse(
+            request,
             "index.html",
             {
-                "request": request,
                 "app_version": server.state.app_version,
                 "api_key_header": settings.api_key_header,
                 "cache_max_documents": telemetry_config.cache_max_docs,
@@ -230,11 +130,10 @@ def create_app(
 
     @server.get("/status")
     async def status():
-        snapshot = server.state.aggregator.get_snapshot()
         return {
-            "status": snapshot["status"],
-            "provider": snapshot["provider"],
-            "version": snapshot["version"],
+            "status": "ok",
+            "service": "telemetry",
+            "version": server.state.app_version,
         }
 
     @server.get("/health")
@@ -545,37 +444,6 @@ def create_app(
                     "Please verify year/trackName/session values."
                 ),
             ) from exc
-
-    @server.get("/live/session/current")
-    async def live_session_current():
-        snapshot = server.state.aggregator.get_snapshot()
-        return {
-            "version": snapshot["version"],
-            "provider": snapshot["provider"],
-            "status": snapshot["status"],
-            "session": snapshot["current_session"],
-        }
-
-    @server.get("/live/timing/snapshot")
-    async def live_timing_snapshot():
-        return server.state.aggregator.get_snapshot()
-
-    @server.get("/live/timing/stream")
-    async def live_timing_stream(request: Request):
-        return StreamingResponse(
-            server.state.sse_broadcaster.stream(request),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @server.post("/live/reload")
-    async def live_reload():
-        snapshot = await server.state.live_service.reload()
-        return snapshot
 
     return server
 
