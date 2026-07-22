@@ -117,6 +117,27 @@ curl -H "X-API-Key: <API_KEY>" \
   -o comparison.pdf
 ```
 
+## Telemetry errors
+
+The two PDF routes return telemetry errors with a stable machine-readable code
+and a public English message:
+
+```json
+{
+  "code": "SESSION_UNAVAILABLE",
+  "detail": "The requested session is not available."
+}
+```
+
+- `400`: required parameters are missing or telemetry data cannot be processed
+- `404`: the requested session or driver telemetry is unavailable
+- `422`: FastAPI query type validation failed
+- `500`: report generation, generated-file, or unexpected internal failure
+- `502`: the upstream telemetry provider is unavailable
+
+Version `2.0.0` changes the previous error response contract by adding `code`
+and consistently using `detail` instead of the earlier `error` field.
+
 ## Persistent PDF cache
 
 PDF names are deterministic. A repeated request for the same parameters is

@@ -13,8 +13,19 @@ import os
 from typing import Any
 
 import fastf1 as ff1
+from fastf1.exceptions import (
+    DataNotLoadedError,
+    InvalidSessionError,
+    NoLapDataError,
+)
 
 from src.fastf1_cache import fastf1_cache_guard
+from src.telemetry.errors import (
+    DriverTelemetryUnavailableError,
+    SessionUnavailableError,
+    TelemetryGenerationError,
+    TelemetryProviderError,
+)
 from src.telemetry.processing import (
     calculate_delta,
     downsample_telemetry,
@@ -24,10 +35,6 @@ from src.telemetry.processing import (
     prepare_telemetry,
 )
 from src.telemetry.reports import TelemetryReportBuilder, close_all_figures
-
-
-class TelemetryError(RuntimeError):
-    pass
 
 
 class Telemetry:
@@ -86,16 +93,37 @@ class Telemetry:
                     messages=False,
                 )
             return loaded_session
+        except (DataNotLoadedError, InvalidSessionError, NoLapDataError) as exc:
+            raise self._session_unavailable_error() from exc
         except Exception as exc:
-            raise TelemetryError(f"Error loading session data: {exc}") from exc
+            raise TelemetryProviderError(
+                f"Error loading session data: {exc}"
+            ) from exc
+
+    def _session_unavailable_error(self) -> SessionUnavailableError:
+        return SessionUnavailableError(
+            f"Session unavailable: {self.year} {self.track_name} {self.session}"
+        )
+
+    def _get_loaded_laps(self, session):
+        try:
+            laps = session.laps
+        except (DataNotLoadedError, NoLapDataError) as exc:
+            raise self._session_unavailable_error() from exc
+
+        if laps.empty:
+            raise self._session_unavailable_error()
+        return laps
 
     def get_fl_telemetry(self, output_path: str | None = None) -> str:
         session = None
         try:
             session = self.load_session_data()
-            driver_laps = session.laps.pick_drivers(self.driver_name)
+            driver_laps = self._get_loaded_laps(session).pick_drivers(self.driver_name)
             if driver_laps.empty:
-                raise TelemetryError(f"No laps found for driver {self.driver_name}")
+                raise DriverTelemetryUnavailableError(
+                    f"No laps found for driver {self.driver_name}"
+                )
 
             fastest_lap = driver_laps.pick_fastest()
             telemetry = fastest_lap.get_car_data(interpolate_edges=True).add_distance()
@@ -119,12 +147,17 @@ class Telemetry:
         session = None
         try:
             session = self.load_session_data()
-            laps_a = session.laps.pick_drivers(driver_a)
-            laps_b = session.laps.pick_drivers(driver_b)
+            session_laps = self._get_loaded_laps(session)
+            laps_a = session_laps.pick_drivers(driver_a)
+            laps_b = session_laps.pick_drivers(driver_b)
             if laps_a.empty:
-                raise TelemetryError(f"No laps found for driver {driver_a}")
+                raise DriverTelemetryUnavailableError(
+                    f"No laps found for driver {driver_a}"
+                )
             if laps_b.empty:
-                raise TelemetryError(f"No laps found for driver {driver_b}")
+                raise DriverTelemetryUnavailableError(
+                    f"No laps found for driver {driver_b}"
+                )
 
             lap_a = laps_a.pick_fastest()
             lap_b = laps_b.pick_fastest()
@@ -162,7 +195,9 @@ class Telemetry:
                 output_path,
             )
         except Exception as exc:
-            raise TelemetryError(f"Error generating telemetry plot: {exc}") from exc
+            raise TelemetryGenerationError(
+                f"Error generating telemetry plot: {exc}"
+            ) from exc
 
     def build_comparison_plot(
         self,
@@ -188,7 +223,7 @@ class Telemetry:
                 output_path,
             )
         except Exception as exc:
-            raise TelemetryError(
+            raise TelemetryGenerationError(
                 f"Error generating comparison telemetry plot: {exc}"
             ) from exc
 

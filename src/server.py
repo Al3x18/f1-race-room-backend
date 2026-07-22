@@ -27,6 +27,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Domain routes are declared in ``src/api_routes.py``. Keeping them outside
 # this module leaves ``create_app`` focused on application setup and middleware.
 from src.api_routes import catalog_router, telemetry_router
+from src.api_errors import install_api_error_handlers
 from src.app_settings import AppSettings
 from src.legacy_catalog import LegacyCatalogService
 from src.telemetry.cache import MIB, TelemetryPdfCache
@@ -71,6 +72,7 @@ def create_app(
     )
 
     server = FastAPI(title="F1 Race Room Telemetry Backend")
+    install_api_error_handlers(server)
     server.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     base_dir = Path(__file__).resolve().parent.parent

@@ -9,12 +9,14 @@ import os
 
 from fastapi.responses import FileResponse
 
+from src.telemetry.errors import TelemetryArtifactError
+
 
 class SendTelemetryFile:
     @staticmethod
     def send_file_from_path(file_path: str) -> FileResponse:
         if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
+            raise TelemetryArtifactError(f"File not found: {file_path}")
 
         return FileResponse(
             path=file_path,

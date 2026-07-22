@@ -14,10 +14,14 @@ from functools import partial
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 
+from src.api_errors import (
+    MISSING_COMPARISON_TELEMETRY_PARAMETERS,
+    MISSING_SINGLE_TELEMETRY_PARAMETERS,
+    api_error_response,
+)
 from src.send_telemetry_file import SendTelemetryFile
-from src.telemetry import Telemetry, TelemetryError
+from src.telemetry import Telemetry, TelemetryArtifactError
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +72,11 @@ async def _serve_cached_pdf(
             try:
                 generated_path = await asyncio.to_thread(generator, output_path)
                 file_path = cache_manager.commit_output(cache_filename, generated_path)
+            except FileNotFoundError as exc:
+                cache_manager.discard_output(output_path)
+                raise TelemetryArtifactError(
+                    f"Generated telemetry file was not found: {exc}"
+                ) from exc
             except Exception:
                 cache_manager.discard_output(output_path)
                 raise
@@ -111,14 +120,7 @@ async def get_telemetry(
     driver_name: Optional[str] = Query(default=None, alias="driverName"),
 ):
     if year is None or not track_name or not session or not driver_name:
-        return JSONResponse(
-            {
-                "error": (
-                    "Missing required parameters: year, trackName, session, driverName"
-                )
-            },
-            status_code=400,
-        )
+        return api_error_response(MISSING_SINGLE_TELEMETRY_PARAMETERS)
 
     telemetry = _telemetry_for_request(
         request,
@@ -135,34 +137,12 @@ async def get_telemetry(
         driver_name,
     )
 
-    try:
-        return await _serve_cached_pdf(
-            request,
-            cache_filename,
-            "single",
-            telemetry.get_fl_telemetry,
-        )
-    except FileNotFoundError as exc:
-        logger.exception("[telemetry] generated single PDF was not found")
-        raise HTTPException(
-            status_code=404,
-            detail="Generated telemetry file not found.",
-        ) from exc
-    except TelemetryError as exc:
-        logger.exception("[telemetry] single telemetry generation failed")
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Data not found. Could not process telemetry data. "
-                "Please check the provided parameters."
-            ),
-        ) from exc
-    except Exception as exc:
-        logger.exception("[telemetry] unexpected single telemetry error")
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred while generating telemetry.",
-        ) from exc
+    return await _serve_cached_pdf(
+        request,
+        cache_filename,
+        "single",
+        telemetry.get_fl_telemetry,
+    )
 
 
 @telemetry_router.get("/get-telemetry-compare")
@@ -175,14 +155,7 @@ async def get_telemetry_compare(
     driver_b: Optional[str] = Query(default=None, alias="driverB"),
 ):
     if year is None or not track_name or not session or not driver_a or not driver_b:
-        return JSONResponse(
-            {
-                "error": (
-                    "Missing required parameters: year, trackName, session, driverA, driverB"
-                )
-            },
-            status_code=400,
-        )
+        return api_error_response(MISSING_COMPARISON_TELEMETRY_PARAMETERS)
 
     telemetry = _telemetry_for_request(
         request,
@@ -200,34 +173,12 @@ async def get_telemetry_compare(
         driver_b=driver_b,
     )
 
-    try:
-        return await _serve_cached_pdf(
-            request,
-            cache_filename,
-            "comparison",
-            partial(telemetry.get_comparison_telemetry_pdf, driver_a, driver_b),
-        )
-    except FileNotFoundError as exc:
-        logger.exception("[telemetry] generated comparison PDF was not found")
-        raise HTTPException(
-            status_code=404,
-            detail="Generated telemetry file not found.",
-        ) from exc
-    except TelemetryError as exc:
-        logger.exception("[telemetry] comparison telemetry generation failed")
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Data not found. Could not process comparison telemetry data. "
-                "Please check the provided parameters."
-            ),
-        ) from exc
-    except Exception as exc:
-        logger.exception("[telemetry] unexpected comparison telemetry error")
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred while generating telemetry.",
-        ) from exc
+    return await _serve_cached_pdf(
+        request,
+        cache_filename,
+        "comparison",
+        partial(telemetry.get_comparison_telemetry_pdf, driver_a, driver_b),
+    )
 
 
 @catalog_router.get("/events")

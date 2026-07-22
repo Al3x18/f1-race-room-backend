@@ -68,11 +68,20 @@ side effects of every Python module under `src`.
   response creation for both PDF routes.
 - `_telemetry_for_request()` constructs the `Telemetry` facade with the runtime
   plot-point limit stored in `request.app.state`.
-- Translates domain, missing-file, and unexpected exceptions into sanitized
-  `400`, `404`, and `500` responses. Authentication is intentionally delegated
-  to the middleware in `src/server.py`.
+- Returns domain errors to the application-level handlers in
+  `src/api_errors.py`. Authentication is intentionally delegated to the
+  middleware in `src/server.py`.
 - FastF1/network work occurs only when a catalog route or uncached PDF route
   invokes its underlying service.
+
+#### `src/api_errors.py` and `src/telemetry/errors.py`
+
+- `src/telemetry/errors.py` defines typed domain failures without HTTP status
+  codes or public response strings.
+- `src/api_errors.py` maps those failures to stable status codes, machine codes,
+  public English messages, and logging levels.
+- Telemetry errors use a consistent `{"code": "...", "detail": "..."}` JSON
+  response and do not expose internal exception messages.
 
 #### `src/app_settings.py`
 
@@ -247,7 +256,7 @@ Returns local service information only:
 {
   "status": "ok",
   "service": "telemetry",
-  "version": "1.2.1"
+  "version": "2.0.0"
 }
 ```
 
@@ -312,6 +321,18 @@ Required query parameters:
 
 Both routes return `application/pdf` with an attachment filename.
 
+Known telemetry failures return JSON with a stable machine-readable code:
+
+```json
+{
+  "code": "SESSION_UNAVAILABLE",
+  "detail": "The requested session is not available."
+}
+```
+
+Session and driver data that do not exist return `404`, upstream provider
+failures return `502`, and report or file-generation failures return `500`.
+
 ## Cache and concurrency flow
 
 1. Normalize request parameters into a deterministic filename.
@@ -369,9 +390,9 @@ Unauthorized requests receive `401` without exposing the expected key. Internal
 exceptions are logged server-side and sanitized before being returned.
 
 Missing application query parameters return `400`. A query parameter with an
-invalid FastAPI type, such as a non-integer `year`, returns `422`. Telemetry data
-that cannot be loaded returns `400`; an unexpected generation error returns
-`500`. A generated file that disappears before it can be sent returns `404`.
+invalid FastAPI type, such as a non-integer `year`, returns `422`. An unavailable
+session or driver returns `404`, a FastF1 provider failure returns `502`, and an
+unexpected report or file-generation error returns `500`.
 
 ## Container deployment
 

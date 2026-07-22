@@ -7,6 +7,38 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-22
+
+### Added
+
+- Added typed telemetry-domain errors for unavailable sessions and drivers,
+  upstream provider failures, report generation failures, and missing PDF
+  artifacts.
+- Added centralized FastAPI error definitions and handlers with stable machine
+  codes, public English messages, HTTP statuses, and server-side logging.
+- Added error-path coverage for both telemetry routes, FastF1 exceptions,
+  missing driver laps, renderer failures, invalid parameters, and sanitized
+  unexpected errors.
+
+### Changed
+
+- **Breaking:** telemetry error responses now use the consistent
+  `{"code": "...", "detail": "..."}` JSON schema. Missing-parameter responses
+  previously used an `error` field, while other failures returned only
+  `detail`.
+- **Breaking:** unavailable sessions and driver telemetry now return `404`,
+  upstream FastF1 provider failures return `502`, and report or generated-file
+  failures return `500`.
+- Moved telemetry error response strings and status mappings out of route
+  handlers into a centralized API error catalog.
+
+### Fixed
+
+- Prevented future or unloaded FastF1 sessions from falling through as
+  unclassified internal errors when lap data is unavailable.
+- Prevented internal provider, renderer, path, and exception details from being
+  exposed in API responses.
+
 ## [1.2.1] - 2026-07-22
 
 ### Changed
