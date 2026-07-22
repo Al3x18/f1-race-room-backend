@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-22
+
 ### Changed
 
 - Refactored the oversized telemetry module into a FastF1 facade, pure data
@@ -24,8 +26,16 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 ### Fixed
 
 - Replaced the deprecated FastF1 `utils.delta_time` call with a local,
-  distance-normalized interpolation while preserving telemetry comparison
-  semantics.
+  distance-normalized interpolation.
+- Expressed the total gap and continuous delta from the first selected
+  driver's point of view: positive when the first driver is slower and
+  negative when the first driver is ahead.
+- Fixed negative sub-minute gaps such as `-0.534 s` being incorrectly rendered
+  as `-1:59.466`, and made signed formatting reliable for gaps ranging from
+  milliseconds to multiple minutes.
+- Aligned the delta graph legend and colors with the corrected sign convention.
+- Added regression tests for swapped drivers and positive or negative gaps of
+  10 seconds, more than one minute, and up to 10 minutes.
 - Configured pytest to include the repository root on its import path so the
   direct `pytest` command can collect application modules.
 

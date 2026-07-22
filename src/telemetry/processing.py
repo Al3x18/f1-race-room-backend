@@ -14,15 +14,27 @@ import numpy as np
 
 
 def format_lap_time(lap_time: Any) -> str:
+    """Format lap times and signed gaps without wrapping negative values.
+
+    ``timedelta`` values use floor division semantics. Formatting ``-0.534``
+    seconds directly with ``// 60`` and ``% 60`` would therefore produce the
+    misleading ``-1:59.466``. Convert the complete value to milliseconds
+    first, split its absolute magnitude, and add the sign only at the end.
+    """
     if lap_time is None:
         return "N/A"
     try:
         total_seconds = float(lap_time.total_seconds())
+        if not np.isfinite(total_seconds):
+            return "N/A"
     except Exception:
         return "N/A"
-    minutes = int(total_seconds // 60)
-    seconds = total_seconds % 60
-    return f"{minutes}:{seconds:06.3f}"
+
+    total_milliseconds = int(round(total_seconds * 1000.0))
+    sign = "-" if total_milliseconds < 0 else ""
+    minutes, remaining_milliseconds = divmod(abs(total_milliseconds), 60_000)
+    seconds = remaining_milliseconds / 1000.0
+    return f"{sign}{minutes}:{seconds:06.3f}"
 
 
 def format_metric(
@@ -110,9 +122,10 @@ def calculate_delta(
     endpoint is later used for analytical timing, consider anchoring the
     interpolated curve to the official cumulative S1, S2 and lap-time gaps.
 
-    The calculation keeps the old semantics: lap A is the reference, lap B is
-    interpolated on lap A's distance axis and a positive value means that lap B
-    is behind lap A.
+    Lap A is the reference and lap B is interpolated on lap A's distance axis.
+    The sign is expressed from the first selected driver's point of view:
+    positive means that lap A reached the point later than lap B (A is behind),
+    while negative means that lap A reached it earlier (A is ahead).
 
     ``lap_a`` and ``lap_b`` are intentionally retained in the signature so
     callers of the previous internal helper do not need to change.
@@ -193,8 +206,9 @@ def calculate_delta(
             interpolation_distance,
             interpolation_time,
         )
-        # Positive delta: lap B reached this point later than lap A.
-        delta_time[reference_mask] = comparison_time_on_reference - valid_reference_time
+        # Report the gap from the first selected driver's point of view.
+        # Positive: A is slower/behind B. Negative: A is faster/ahead of B.
+        delta_time[reference_mask] = valid_reference_time - comparison_time_on_reference
         return delta_time, telemetry_a, telemetry_b
     except Exception:
         return None, telemetry_a, telemetry_b

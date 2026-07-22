@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
+from src.telemetry.processing import format_lap_time
 from src.telemetry.reports import TelemetryReportBuilder
 
 
@@ -47,6 +49,37 @@ def _builder():
         driver_name="AAA",
         max_plot_points=1200,
     )
+
+
+def test_format_lap_time_preserves_gap_sign_when_drivers_are_swapped():
+    antonelli = pd.to_timedelta(104.361, unit="s")
+    hamilton = pd.to_timedelta(104.895, unit="s")
+
+    assert format_lap_time(antonelli - hamilton) == "-0:00.534"
+    assert format_lap_time(hamilton - antonelli) == "0:00.534"
+
+
+def test_format_lap_time_does_not_wrap_negative_gap_to_previous_minute():
+    gap = pd.to_timedelta(-0.534, unit="s")
+
+    assert format_lap_time(gap) != "-1:59.466"
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (10.0, "0:10.000"),
+        (-10.0, "-0:10.000"),
+        (59.999, "0:59.999"),
+        (-59.999, "-0:59.999"),
+        (70.250, "1:10.250"),
+        (-70.250, "-1:10.250"),
+        (600.0, "10:00.000"),
+        (-600.0, "-10:00.000"),
+    ],
+)
+def test_format_lap_time_supports_large_positive_and_negative_gaps(seconds, expected):
+    assert format_lap_time(pd.to_timedelta(seconds, unit="s")) == expected
 
 
 def test_single_report_builder_creates_pdf(tmp_path):

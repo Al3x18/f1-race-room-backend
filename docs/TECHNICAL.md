@@ -247,7 +247,7 @@ Returns local service information only:
 {
   "status": "ok",
   "service": "telemetry",
-  "version": "1.2.0"
+  "version": "1.2.1"
 }
 ```
 

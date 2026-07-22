@@ -439,7 +439,10 @@ class TelemetryReportBuilder:
 
             lap_time_a = format_lap_time(getattr(lap_a, "LapTime", None))
             lap_time_b = format_lap_time(getattr(lap_b, "LapTime", None))
-            lap_time_delta = getattr(lap_b, "LapTime", None) - getattr(lap_a, "LapTime", None)
+            # Keep the total gap consistent with the delta graph: it is always
+            # shown from the first selected driver's point of view. A positive
+            # value means driver A is slower; a negative value means A is ahead.
+            lap_time_delta = getattr(lap_a, "LapTime", None) - getattr(lap_b, "LapTime", None)
             delta_total = format_lap_time(lap_time_delta)
 
             figure = plt.figure(figsize=(16, 14.4), facecolor="#0f1720")
@@ -539,22 +542,22 @@ class TelemetryReportBuilder:
                 ax_delta.plot(distance_a, delta_time, color="#f8fafc", linewidth=1.5)
                 positive = np.where(delta_time >= 0.0, delta_time, np.nan)
                 negative = np.where(delta_time < 0.0, delta_time, np.nan)
-                ax_delta.fill_between(distance_a, 0.0, positive, color=color_a, alpha=0.18)
-                ax_delta.fill_between(distance_a, 0.0, negative, color=color_b, alpha=0.18)
+                ax_delta.fill_between(distance_a, 0.0, positive, color=color_b, alpha=0.18)
+                ax_delta.fill_between(distance_a, 0.0, negative, color=color_a, alpha=0.18)
                 ax_delta.text(
                     0.01,
                     0.90,
-                    f"+ = {driver_b} slower vs {driver_a}",
+                    f"+ = {driver_a} slower vs {driver_b}",
                     transform=ax_delta.transAxes,
-                    color=color_a,
+                    color=color_b,
                     fontsize=8,
                 )
                 ax_delta.text(
                     0.01,
                     0.78,
-                    f"- = {driver_b} ahead of {driver_a}",
+                    f"- = {driver_a} ahead of {driver_b}",
                     transform=ax_delta.transAxes,
-                    color=color_b,
+                    color=color_a,
                     fontsize=8,
                 )
                 ax_delta.grid(color="#203144", alpha=0.5, linewidth=0.7)

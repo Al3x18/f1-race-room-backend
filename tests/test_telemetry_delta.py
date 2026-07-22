@@ -24,7 +24,7 @@ def test_calculate_delta_interpolates_comparison_on_reference_distance():
         comparison,
     )
 
-    np.testing.assert_allclose(delta, [0.0, 0.5, 1.0])
+    np.testing.assert_allclose(delta, [0.0, -0.5, -1.0])
     assert returned_reference is reference
     assert returned_comparison is comparison
 
@@ -38,7 +38,19 @@ def test_calculate_delta_ignores_repeated_comparison_distances():
 
     delta, _, _ = Telemetry._calculate_delta(None, None, reference, comparison)
 
-    np.testing.assert_allclose(delta, [0.0, 0.0, 0.5])
+    np.testing.assert_allclose(delta, [0.0, 0.0, -0.5])
+
+
+def test_calculate_delta_changes_sign_when_drivers_are_swapped():
+    faster = _telemetry([0.0, 100.0, 200.0], [0.0, 1.0, 2.0])
+    slower = _telemetry([0.0, 100.0, 200.0], [0.0, 1.25, 2.5])
+
+    faster_first, _, _ = Telemetry._calculate_delta(None, None, faster, slower)
+    slower_first, _, _ = Telemetry._calculate_delta(None, None, slower, faster)
+
+    np.testing.assert_allclose(faster_first, -slower_first)
+    assert faster_first[-1] == -0.5
+    assert slower_first[-1] == 0.5
 
 
 def test_calculate_delta_falls_back_when_required_data_is_missing():
