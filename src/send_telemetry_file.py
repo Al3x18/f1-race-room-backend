@@ -1,3 +1,10 @@
+"""Create FastAPI responses for generated telemetry PDF files.
+
+The helper verifies that a requested file exists and returns it with a stable
+PDF media type and download filename. File generation and persistent caching
+are handled elsewhere.
+"""
+
 import os
 
 from fastapi.responses import FileResponse

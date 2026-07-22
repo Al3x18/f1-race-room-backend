@@ -7,6 +7,28 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Changed
+
+- Refactored the oversized telemetry module into a FastF1 facade, pure data
+  processing helpers, and a cohesive PDF report builder.
+- Grouped telemetry service, processing, reports, cache, and configuration
+  under the `src/telemetry` domain package while preserving its public import.
+- Extracted telemetry and catalog routes from the FastAPI application factory
+  and centralized the shared cached-report generation workflow.
+- Added integration coverage for telemetry routes, cache hits, comparison
+  arguments, and both PDF report renderers.
+- Added explicit module-level documentation across `src` and expanded the
+  technical code map with every module's responsibilities, APIs, delegations,
+  and side effects.
+
+### Fixed
+
+- Replaced the deprecated FastF1 `utils.delta_time` call with a local,
+  distance-normalized interpolation while preserving telemetry comparison
+  semantics.
+- Configured pytest to include the repository root on its import path so the
+  direct `pytest` command can collect application modules.
+
 ## [1.2.0] - 2026-07-22
 
 ### Changed

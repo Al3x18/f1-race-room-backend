@@ -1,3 +1,10 @@
+"""Coordinate FastF1's process-global download cache safely.
+
+FastF1 cache configuration is global to the Python process, so concurrent
+session/catalog loads could otherwise delete or disable each other's cache.
+The context manager serializes that sensitive section and uses temporary data.
+"""
+
 from __future__ import annotations
 
 import shutil

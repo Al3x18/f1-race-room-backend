@@ -1,5 +1,5 @@
 # Telemetry runtime configuration
-# This file is read at startup by src/telemetry_runtime_config.py
+# This file is read at startup by src/telemetry/config.py
 
 # How many telemetry generations can run in parallel.
 max_concurrency = 2

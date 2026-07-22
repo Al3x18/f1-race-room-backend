@@ -1,3 +1,10 @@
+"""Manage the persistent cache of generated telemetry PDFs.
+
+The cache creates deterministic filenames, validates completed PDFs, publishes
+staged files atomically, updates LRU timestamps, and enforces both document and
+byte limits. It does not manage FastF1's separate upstream download cache.
+"""
+
 from __future__ import annotations
 
 import os

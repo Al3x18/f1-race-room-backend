@@ -1,3 +1,10 @@
+"""Load runtime limits and PDF-cache configuration for telemetry generation.
+
+Values are read from ``config/telemetry.toml`` (or ``TELEMETRY_CONFIG_FILE``)
+and then overridden by environment variables. Invalid values fall back to safe
+defaults so configuration mistakes do not prevent application startup.
+"""
+
 from __future__ import annotations
 
 import os

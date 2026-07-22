@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 
-from src.telemetry_cache import TelemetryPdfCache
+from src.telemetry.cache import TelemetryPdfCache
 
 
 def test_single_filename_format(tmp_path: Path):

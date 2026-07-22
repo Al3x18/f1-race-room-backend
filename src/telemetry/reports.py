@@ -1,80 +1,55 @@
-import os
-import gc
+"""Render single-driver and comparison telemetry reports with Matplotlib.
 
-import fastf1 as ff1
+``TelemetryReportBuilder`` owns the shared visual language, annotations, plot
+layouts, and PDF output for both report types. It consumes already-loaded data
+and delegates numerical transformations to ``telemetry.processing``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
 import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-from fastf1 import utils as ff1_utils
-
-from src.fastf1_cache import fastf1_cache_guard
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt
 
-class TelemetryError(RuntimeError):
-    pass
+from src.telemetry.processing import (
+    calculate_delta,
+    downsample_telemetry,
+    downsample_with_delta,
+    format_lap_time,
+    format_metric,
+    prepare_telemetry,
+)
 
 
-class Telemetry:
+def close_all_figures() -> None:
+    plt.close("all")
+
+
+class TelemetryReportBuilder:
+    """Render telemetry data that has already been loaded from FastF1."""
+
     def __init__(
         self,
         year: int,
         track_name: str,
         session: str,
         driver_name: str,
-        max_plot_points: int | None = None,
-    ):
+        max_plot_points: int,
+    ) -> None:
         self.year = year
         self.track_name = track_name
         self.session = session
         self.driver_name = driver_name
-        if max_plot_points is None:
-            self.max_plot_points = self._env_int("TELEMETRY_MAX_PLOT_POINTS", default=1200, minimum=300)
-        else:
-            self.max_plot_points = max(300, int(max_plot_points))
+        self.max_plot_points = max_plot_points
 
     @staticmethod
-    def _env_int(name: str, default: int, minimum: int = 1) -> int:
-        raw_value = os.getenv(name, str(default))
-        try:
-            parsed = int(raw_value)
-        except (TypeError, ValueError):
-            return default
-        return parsed if parsed >= minimum else default
-
-    def load_session_data(self):
-        try:
-            with fastf1_cache_guard():
-                loaded_session = ff1.get_session(self.year, self.track_name, self.session)
-                loaded_session.load(
-                    laps=True,
-                    telemetry=True,
-                    weather=False,
-                    messages=False,
-                )
-            return loaded_session
-        except Exception as exc:
-            raise TelemetryError(f"Error loading session data: {exc}") from exc
-
-    def get_fl_telemetry(self, output_path: str | None = None) -> str:
-        session = None
-        try:
-            session = self.load_session_data()
-            driver_laps = session.laps.pick_drivers(self.driver_name)
-            if driver_laps.empty:
-                raise TelemetryError(f"No laps found for driver {self.driver_name}")
-
-            fastest_lap = driver_laps.pick_fastest()
-            telemetry = fastest_lap.get_car_data(interpolate_edges=True).add_distance()
-            return self.build_fastest_lap_plot(session, telemetry, fastest_lap, output_path=output_path)
-        finally:
-            session = None
-            plt.close("all")
-            gc.collect()
-
-    @staticmethod
-    def _extract_corner_markers(session, telemetry, distance):
+    def _extract_corner_markers(session: Any, telemetry: Any, distance: Any):
         corner_ticks = []
         corner_labels = []
         try:
@@ -83,7 +58,6 @@ class Telemetry:
             if corners is None or corners.empty:
                 return [], []
 
-            # Preferred path: FastF1 already gives corner distance.
             if "Distance" in corners.columns:
                 for _, corner in corners.iterrows():
                     number = corner.get("Number")
@@ -120,7 +94,6 @@ class Telemetry:
         except Exception:
             return [], []
 
-        # Remove almost-overlapping markers.
         dedup_ticks = []
         dedup_labels = []
         for tick, label in sorted(zip(corner_ticks, corner_labels), key=lambda item: item[0]):
@@ -131,119 +104,16 @@ class Telemetry:
         return dedup_ticks, dedup_labels
 
     @staticmethod
-    def _add_corner_axis(axis, corner_ticks, corner_labels, offset=20):
+    def _add_corner_axis(axis: Any, corner_ticks: list, corner_labels: list, offset=20):
         if not corner_ticks:
             return
-        ax_corner_labels = axis.secondary_xaxis("bottom")
-        ax_corner_labels.spines["bottom"].set_position(("outward", offset))
-        ax_corner_labels.spines["bottom"].set_color("#2e4358")
-        ax_corner_labels.set_xticks(corner_ticks)
-        ax_corner_labels.set_xticklabels(corner_labels)
-        ax_corner_labels.tick_params(axis="x", colors="#d8e5f6", labelsize=8, pad=1)
-        ax_corner_labels.set_xlabel("Corner #", color="#a9bdd2", labelpad=8)
-
-    def get_comparison_telemetry_pdf(
-        self,
-        driver_a: str,
-        driver_b: str,
-        output_path: str | None = None,
-    ) -> str:
-        session = None
-        try:
-            session = self.load_session_data()
-            laps_a = session.laps.pick_drivers(driver_a)
-            laps_b = session.laps.pick_drivers(driver_b)
-            if laps_a.empty:
-                raise TelemetryError(f"No laps found for driver {driver_a}")
-            if laps_b.empty:
-                raise TelemetryError(f"No laps found for driver {driver_b}")
-
-            lap_a = laps_a.pick_fastest()
-            lap_b = laps_b.pick_fastest()
-            tel_a = lap_a.get_car_data(interpolate_edges=True).add_distance()
-            tel_b = lap_b.get_car_data(interpolate_edges=True).add_distance()
-
-            return self.build_comparison_plot(
-                session=session,
-                driver_a=driver_a,
-                driver_b=driver_b,
-                lap_a=lap_a,
-                lap_b=lap_b,
-                telemetry_a=tel_a,
-                telemetry_b=tel_b,
-                output_path=output_path,
-            )
-        finally:
-            session = None
-            plt.close("all")
-            gc.collect()
-
-    @staticmethod
-    def _format_lap_time(lap_time) -> str:
-        if lap_time is None:
-            return "N/A"
-        try:
-            total_seconds = float(lap_time.total_seconds())
-        except Exception:
-            return "N/A"
-        minutes = int(total_seconds // 60)
-        seconds = total_seconds % 60
-        return f"{minutes}:{seconds:06.3f}"
-
-    @staticmethod
-    def _metric(series, op, default="N/A", decimals=1, suffix=""):
-        if series is None:
-            return default
-        try:
-            if len(series) == 0:
-                return default
-            value = op(series)
-            if value is None:
-                return default
-            return f"{float(value):.{decimals}f}{suffix}"
-        except Exception:
-            return default
-
-    @staticmethod
-    def _prepare_telemetry(telemetry):
-        if telemetry is None:
-            return telemetry
-        if "Distance" not in telemetry.columns:
-            telemetry = telemetry.copy()
-            telemetry["Distance"] = np.arange(len(telemetry), dtype=float)
-        return telemetry
-
-    @staticmethod
-    def _downsample_telemetry(telemetry, max_points):
-        if telemetry is None:
-            return telemetry
-        if max_points <= 0:
-            return telemetry
-        total_rows = len(telemetry.index)
-        if total_rows <= max_points:
-            return telemetry
-        step = max(1, int(np.ceil(total_rows / max_points)))
-        return telemetry.iloc[::step].reset_index(drop=True)
-
-    @staticmethod
-    def _downsample_with_delta(telemetry, delta_time, max_points):
-        if telemetry is None:
-            return telemetry, delta_time
-        if max_points <= 0:
-            return telemetry, delta_time
-        total_rows = len(telemetry.index)
-        if total_rows <= max_points:
-            return telemetry, delta_time
-        sampled = Telemetry._downsample_telemetry(telemetry, max_points)
-        if delta_time is None:
-            return sampled, delta_time
-        if len(delta_time) != len(telemetry):
-            return sampled, delta_time
-        payload = telemetry.copy()
-        payload["_delta_time"] = np.asarray(delta_time, dtype=float)
-        sampled_payload = Telemetry._downsample_telemetry(payload, max_points)
-        sampled_delta = np.asarray(sampled_payload.pop("_delta_time"), dtype=float)
-        return sampled_payload, sampled_delta
+        corner_axis = axis.secondary_xaxis("bottom")
+        corner_axis.spines["bottom"].set_position(("outward", offset))
+        corner_axis.spines["bottom"].set_color("#2e4358")
+        corner_axis.set_xticks(corner_ticks)
+        corner_axis.set_xticklabels(corner_labels)
+        corner_axis.tick_params(axis="x", colors="#d8e5f6", labelsize=8, pad=1)
+        corner_axis.set_xlabel("Corner #", color="#a9bdd2", labelpad=8)
 
     @staticmethod
     def _select_annotation_ticks(corner_ticks, min_gap=220.0, max_labels=10):
@@ -257,7 +127,15 @@ class Telemetry:
         return selected
 
     @staticmethod
-    def _annotate_speed_markers(axis, distance, speed, ticks, color, vertical="above", with_unit=False):
+    def _annotate_speed_markers(
+        axis,
+        distance,
+        speed,
+        ticks,
+        color,
+        vertical="above",
+        with_unit=False,
+    ):
         if distance is None or speed is None or not ticks:
             return
         d_vals = np.asarray(distance, dtype=float)
@@ -274,14 +152,14 @@ class Telemetry:
         for idx_tick, tick in enumerate(ticks):
             nearest_idx = int(np.argmin(np.abs(d_vals - tick)))
             speed_value = float(s_vals[nearest_idx])
-            direction = 1.0 if (vertical == "above") else -1.0
+            direction = 1.0 if vertical == "above" else -1.0
             y_offset = 8.0 + (idx_tick % 2) * 7.0
             label = f"{int(round(speed_value))}"
             if with_unit:
                 label = f"{label} km/h"
             axis.text(
                 float(d_vals[nearest_idx]),
-                speed_value + (direction * y_offset),
+                speed_value + direction * y_offset,
                 label,
                 color=color,
                 fontsize=6.5,
@@ -337,45 +215,44 @@ class Telemetry:
         )
 
     @staticmethod
-    def _calculate_delta(lap_a, lap_b, telemetry_a, telemetry_b):
-        try:
-            delta_time, ref_tel, compare_tel = ff1_utils.delta_time(lap_a, lap_b)
-            return np.asarray(delta_time, dtype=float), ref_tel, compare_tel
-        except Exception:
-            return None, telemetry_a, telemetry_b
+    def _resolve_output_path(output_path: str | None, default_filename: str) -> str:
+        file_path = Path(output_path) if output_path else Path("telemetry_files") / default_filename
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        return str(file_path)
 
-    def build_fastest_lap_plot(self, session, telemetry, fastest_lap, output_path: str | None = None) -> str:
+    def build_fastest_lap_plot(
+        self,
+        session,
+        telemetry,
+        fastest_lap,
+        output_path: str | None = None,
+    ) -> str:
         figure = None
         try:
-            telemetry = self._prepare_telemetry(telemetry)
+            telemetry = prepare_telemetry(telemetry)
             speed = telemetry.get("Speed")
             throttle = telemetry.get("Throttle")
             brake = telemetry.get("Brake")
 
-            if brake is not None:
-                brake_pct = brake * 100.0
-            else:
-                brake_pct = None
+            lap_time_label = format_lap_time(getattr(fastest_lap, "LapTime", None))
+            sector_1 = format_lap_time(getattr(fastest_lap, "Sector1Time", None))
+            sector_2 = format_lap_time(getattr(fastest_lap, "Sector2Time", None))
+            sector_3 = format_lap_time(getattr(fastest_lap, "Sector3Time", None))
 
-            lap_time_label = self._format_lap_time(getattr(fastest_lap, "LapTime", None))
-            sector_1 = self._format_lap_time(getattr(fastest_lap, "Sector1Time", None))
-            sector_2 = self._format_lap_time(getattr(fastest_lap, "Sector2Time", None))
-            sector_3 = self._format_lap_time(getattr(fastest_lap, "Sector3Time", None))
-
-            top_speed = self._metric(speed, lambda s: s.max(), suffix=" km/h")
-            avg_speed = self._metric(speed, lambda s: s.mean(), suffix=" km/h")
-            full_throttle = self._metric(
+            top_speed = format_metric(speed, lambda values: values.max(), suffix=" km/h")
+            avg_speed = format_metric(speed, lambda values: values.mean(), suffix=" km/h")
+            full_throttle = format_metric(
                 throttle,
-                lambda s: (s >= 98).mean() * 100.0,
+                lambda values: (values >= 98).mean() * 100.0,
                 suffix="%",
             )
-            brake_usage = self._metric(
+            brake_usage = format_metric(
                 brake,
-                lambda s: (s > 0).mean() * 100.0,
+                lambda values: (values > 0).mean() * 100.0,
                 suffix="%",
             )
 
-            telemetry = self._downsample_telemetry(telemetry, self.max_plot_points)
+            telemetry = downsample_telemetry(telemetry, self.max_plot_points)
             distance = telemetry.get("Distance")
             speed = telemetry.get("Speed")
             throttle = telemetry.get("Throttle")
@@ -412,19 +289,14 @@ class Telemetry:
                 fontweight="bold",
                 color="#f5f8ff",
             )
-            ax_header.text(
-                0.01,
-                0.43,
-                title,
-                fontsize=11.5,
-                color="#b8c6d8",
-            )
+            ax_header.text(0.01, 0.43, title, fontsize=11.5, color="#b8c6d8")
 
             metadata_line = (
                 f"Team: {getattr(fastest_lap, 'Team', 'N/A')}   "
                 f"Compound: {getattr(fastest_lap, 'Compound', 'N/A')}   "
                 f"Tyre life: {getattr(fastest_lap, 'TyreLife', 'N/A')} laps   "
-                f"Personal best: {'Yes' if bool(getattr(fastest_lap, 'IsPersonalBest', False)) else 'No'}"
+                f"Personal best: "
+                f"{'Yes' if bool(getattr(fastest_lap, 'IsPersonalBest', False)) else 'No'}"
             )
             ax_header.text(0.01, 0.14, metadata_line, fontsize=10, color="#9bb0c7")
 
@@ -462,10 +334,10 @@ class Telemetry:
             if speed is not None:
                 ax_speed.legend(loc="upper right", frameon=False, labelcolor="#d8e5f6")
 
-            dedup_ticks, dedup_labels = self._extract_corner_markers(
-                session=session,
-                telemetry=telemetry,
-                distance=distance,
+            corner_ticks, corner_labels = self._extract_corner_markers(
+                session,
+                telemetry,
+                distance,
             )
 
             if throttle is not None:
@@ -498,33 +370,27 @@ class Telemetry:
             ax_brake.grid(color="#203144", alpha=0.5, linewidth=0.7)
             if brake_pct is not None:
                 ax_brake.legend(loc="upper right", frameon=False, labelcolor="#d8e5f6")
-            if dedup_ticks:
-                self._add_corner_axis(ax_speed, dedup_ticks, dedup_labels, offset=20)
-                self._add_corner_axis(ax_throttle, dedup_ticks, dedup_labels, offset=20)
-                self._add_corner_axis(ax_brake, dedup_ticks, dedup_labels, offset=22)
+
+            if corner_ticks:
+                self._add_corner_axis(ax_speed, corner_ticks, corner_labels, offset=20)
+                self._add_corner_axis(ax_throttle, corner_ticks, corner_labels, offset=20)
+                self._add_corner_axis(ax_brake, corner_ticks, corner_labels, offset=22)
                 self._annotate_speed_markers(
                     ax_speed,
                     distance,
                     speed,
-                    self._select_annotation_ticks(dedup_ticks, min_gap=260.0, max_labels=8),
+                    self._select_annotation_ticks(corner_ticks, min_gap=260.0, max_labels=8),
                     color="#9ed4ff",
                     vertical="above",
                     with_unit=True,
                 )
 
-            if output_path:
-                file_path = output_path
-                output_dir = os.path.dirname(file_path)
-                if output_dir:
-                    os.makedirs(output_dir, exist_ok=True)
-            else:
-                os.makedirs("./telemetry_files", exist_ok=True)
-                file_path = f"./telemetry_files/{self.driver_name}_{self.session}_{self.track_name}_{self.year}.pdf"
+            file_path = self._resolve_output_path(
+                output_path,
+                f"{self.driver_name}_{self.session}_{self.track_name}_{self.year}.pdf",
+            )
             figure.savefig(file_path, bbox_inches="tight", facecolor=figure.get_facecolor())
-
             return file_path
-        except Exception as exc:
-            raise TelemetryError(f"Error generating telemetry plot: {exc}") from exc
         finally:
             if figure is not None:
                 plt.close(figure)
@@ -542,22 +408,23 @@ class Telemetry:
     ) -> str:
         figure = None
         try:
-            telemetry_a = self._prepare_telemetry(telemetry_a)
-            telemetry_b = self._prepare_telemetry(telemetry_b)
-            delta_time, telemetry_a, telemetry_b = self._calculate_delta(
+            telemetry_a = prepare_telemetry(telemetry_a)
+            telemetry_b = prepare_telemetry(telemetry_b)
+            delta_time, telemetry_a, telemetry_b = calculate_delta(
                 lap_a,
                 lap_b,
                 telemetry_a,
                 telemetry_b,
             )
-            telemetry_a = self._prepare_telemetry(telemetry_a)
-            telemetry_b = self._prepare_telemetry(telemetry_b)
-            telemetry_a, delta_time = self._downsample_with_delta(
-                telemetry_a,
+            telemetry_a, delta_time = downsample_with_delta(
+                prepare_telemetry(telemetry_a),
                 delta_time,
                 self.max_plot_points,
             )
-            telemetry_b = self._downsample_telemetry(telemetry_b, self.max_plot_points)
+            telemetry_b = downsample_telemetry(
+                prepare_telemetry(telemetry_b),
+                self.max_plot_points,
+            )
 
             distance_a = telemetry_a.get("Distance")
             distance_b = telemetry_b.get("Distance")
@@ -567,13 +434,13 @@ class Telemetry:
             throttle_b = telemetry_b.get("Throttle")
             brake_a = telemetry_a.get("Brake")
             brake_b = telemetry_b.get("Brake")
-            brake_a_pct = (brake_a * 100.0) if brake_a is not None else None
-            brake_b_pct = (brake_b * 100.0) if brake_b is not None else None
+            brake_a_pct = brake_a * 100.0 if brake_a is not None else None
+            brake_b_pct = brake_b * 100.0 if brake_b is not None else None
 
-            lap_time_a = self._format_lap_time(getattr(lap_a, "LapTime", None))
-            lap_time_b = self._format_lap_time(getattr(lap_b, "LapTime", None))
+            lap_time_a = format_lap_time(getattr(lap_a, "LapTime", None))
+            lap_time_b = format_lap_time(getattr(lap_b, "LapTime", None))
             lap_time_delta = getattr(lap_b, "LapTime", None) - getattr(lap_a, "LapTime", None)
-            delta_total = self._format_lap_time(lap_time_delta)
+            delta_total = format_lap_time(lap_time_delta)
 
             figure = plt.figure(figsize=(16, 14.4), facecolor="#0f1720")
             grid = figure.add_gridspec(
@@ -582,7 +449,6 @@ class Telemetry:
                 height_ratios=[2.15, 2.05, 1.2, 1.35, 1.35],
                 hspace=0.22,
             )
-
             header_grid = grid[0, 0].subgridspec(
                 2,
                 4,
@@ -591,10 +457,7 @@ class Telemetry:
                 wspace=0.28,
             )
             ax_header = figure.add_subplot(header_grid[0, :])
-            ax_card_1 = figure.add_subplot(header_grid[1, 0])
-            ax_card_2 = figure.add_subplot(header_grid[1, 1])
-            ax_card_3 = figure.add_subplot(header_grid[1, 2])
-            ax_card_4 = figure.add_subplot(header_grid[1, 3])
+            stat_axes = [figure.add_subplot(header_grid[1, index]) for index in range(4)]
             ax_speed = figure.add_subplot(grid[1, 0])
             ax_delta = figure.add_subplot(grid[2, 0], sharex=ax_speed)
             ax_throttle = figure.add_subplot(grid[3, 0], sharex=ax_speed)
@@ -605,7 +468,6 @@ class Telemetry:
 
             color_a = "#38bdf8"
             color_b = "#f59e0b"
-
             ax_header.axis("off")
             ax_header.text(
                 0.01,
@@ -635,56 +497,79 @@ class Telemetry:
                 ha="left",
                 va="center",
             )
-            self._draw_stat_card(
-                ax_card_1,
-                f"{driver_a} top speed",
-                self._metric(speed_a, lambda s: s.max(), suffix=" km/h"),
-                color_a,
+
+            stat_cards = (
+                (f"{driver_a} top speed", format_metric(speed_a, lambda s: s.max(), suffix=" km/h"), color_a),
+                (f"{driver_b} top speed", format_metric(speed_b, lambda s: s.max(), suffix=" km/h"), color_b),
+                (f"{driver_a} avg speed", format_metric(speed_a, lambda s: s.mean(), suffix=" km/h"), color_a),
+                (f"{driver_b} avg speed", format_metric(speed_b, lambda s: s.mean(), suffix=" km/h"), color_b),
             )
-            self._draw_stat_card(
-                ax_card_2,
-                f"{driver_b} top speed",
-                self._metric(speed_b, lambda s: s.max(), suffix=" km/h"),
-                color_b,
-            )
-            self._draw_stat_card(
-                ax_card_3,
-                f"{driver_a} avg speed",
-                self._metric(speed_a, lambda s: s.mean(), suffix=" km/h"),
-                color_a,
-            )
-            self._draw_stat_card(
-                ax_card_4,
-                f"{driver_b} avg speed",
-                self._metric(speed_b, lambda s: s.mean(), suffix=" km/h"),
-                color_b,
-            )
+            for axis, (label, value, color) in zip(stat_axes, stat_cards):
+                self._draw_stat_card(axis, label, value, color)
 
             if speed_a is not None:
-                ax_speed.plot(distance_a, speed_a, color=color_a, linewidth=2.0, label=f"{driver_a} speed")
+                ax_speed.plot(
+                    distance_a,
+                    speed_a,
+                    color=color_a,
+                    linewidth=2.0,
+                    label=f"{driver_a} speed",
+                )
             if speed_b is not None:
-                ax_speed.plot(distance_b, speed_b, color=color_b, linewidth=2.0, label=f"{driver_b} speed")
+                ax_speed.plot(
+                    distance_b,
+                    speed_b,
+                    color=color_b,
+                    linewidth=2.0,
+                    label=f"{driver_b} speed",
+                )
             ax_speed.set_title("Speed Overlay", color="#eff5ff", fontsize=12, pad=14)
             ax_speed.set_ylabel("km/h", color="#c8d5e5")
             ax_speed.grid(color="#203144", alpha=0.5, linewidth=0.7)
             ax_speed.legend(loc="upper right", frameon=False, labelcolor="#d8e5f6")
 
             if delta_time is not None and len(delta_time) == len(distance_a):
-                ax_delta.axhline(0.0, color="#9bb0c7", linewidth=0.9, alpha=0.6, linestyle="--")
+                ax_delta.axhline(
+                    0.0,
+                    color="#9bb0c7",
+                    linewidth=0.9,
+                    alpha=0.6,
+                    linestyle="--",
+                )
                 ax_delta.plot(distance_a, delta_time, color="#f8fafc", linewidth=1.5)
                 positive = np.where(delta_time >= 0.0, delta_time, np.nan)
                 negative = np.where(delta_time < 0.0, delta_time, np.nan)
                 ax_delta.fill_between(distance_a, 0.0, positive, color=color_a, alpha=0.18)
                 ax_delta.fill_between(distance_a, 0.0, negative, color=color_b, alpha=0.18)
-                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=14)
-                ax_delta.set_ylabel("sec", color="#c8d5e5")
+                ax_delta.text(
+                    0.01,
+                    0.90,
+                    f"+ = {driver_b} slower vs {driver_a}",
+                    transform=ax_delta.transAxes,
+                    color=color_a,
+                    fontsize=8,
+                )
+                ax_delta.text(
+                    0.01,
+                    0.78,
+                    f"- = {driver_b} ahead of {driver_a}",
+                    transform=ax_delta.transAxes,
+                    color=color_b,
+                    fontsize=8,
+                )
                 ax_delta.grid(color="#203144", alpha=0.5, linewidth=0.7)
-                ax_delta.text(0.01, 0.90, f"+ = {driver_b} slower vs {driver_a}", transform=ax_delta.transAxes, color=color_a, fontsize=8)
-                ax_delta.text(0.01, 0.78, f"- = {driver_b} ahead of {driver_a}", transform=ax_delta.transAxes, color=color_b, fontsize=8)
             else:
-                ax_delta.text(0.5, 0.5, "Delta time unavailable", color="#9bb0c7", fontsize=10, ha="center", va="center")
-                ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=14)
-                ax_delta.set_ylabel("sec", color="#c8d5e5")
+                ax_delta.text(
+                    0.5,
+                    0.5,
+                    "Delta time unavailable",
+                    color="#9bb0c7",
+                    fontsize=10,
+                    ha="center",
+                    va="center",
+                )
+            ax_delta.set_title("Delta Time", color="#eff5ff", fontsize=12, pad=14)
+            ax_delta.set_ylabel("sec", color="#c8d5e5")
 
             if throttle_a is not None:
                 ax_throttle.plot(
@@ -734,13 +619,17 @@ class Telemetry:
             for axis in (ax_speed, ax_delta, ax_throttle):
                 axis.tick_params(labelbottom=False)
 
-            corner_ticks, corner_labels = self._extract_corner_markers(
-                session=session,
-                telemetry=telemetry_a,
-                distance=distance_a,
+            corner_ticks, _ = self._extract_corner_markers(
+                session,
+                telemetry_a,
+                distance_a,
             )
             if corner_ticks:
-                selected_ticks = self._select_annotation_ticks(corner_ticks, min_gap=340.0, max_labels=6)
+                selected_ticks = self._select_annotation_ticks(
+                    corner_ticks,
+                    min_gap=340.0,
+                    max_labels=6,
+                )
                 self._annotate_speed_markers(
                     ax_speed,
                     distance_a,
@@ -748,7 +637,6 @@ class Telemetry:
                     selected_ticks,
                     color=color_a,
                     vertical="above",
-                    with_unit=False,
                 )
                 self._annotate_speed_markers(
                     ax_speed,
@@ -757,23 +645,17 @@ class Telemetry:
                     selected_ticks,
                     color=color_b,
                     vertical="below",
-                    with_unit=False,
                 )
 
-            if output_path:
-                file_path = output_path
-                output_dir = os.path.dirname(file_path)
-                if output_dir:
-                    os.makedirs(output_dir, exist_ok=True)
-            else:
-                os.makedirs("./telemetry_files", exist_ok=True)
-                file_path = (
-                    f"./telemetry_files/{driver_a}_{driver_b}_{self.session}_{self.track_name}_{self.year}_comparison.pdf"
-                )
+            file_path = self._resolve_output_path(
+                output_path,
+                (
+                    f"{driver_a}_{driver_b}_{self.session}_{self.track_name}_"
+                    f"{self.year}_comparison.pdf"
+                ),
+            )
             figure.savefig(file_path, bbox_inches="tight", facecolor=figure.get_facecolor())
             return file_path
-        except Exception as exc:
-            raise TelemetryError(f"Error generating comparison telemetry plot: {exc}") from exc
         finally:
             if figure is not None:
                 plt.close(figure)

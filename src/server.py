@@ -1,3 +1,11 @@
+"""Build and expose the FastAPI application.
+
+This is the application composition root: it loads settings, initializes shared
+state, installs middleware and authentication, defines core routes, and mounts
+the domain routers declared in :mod:`src.api_routes`. It does not implement
+telemetry processing or PDF rendering.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,19 +17,20 @@ from pathlib import Path
 from typing import Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
+# Domain routes are declared in ``src/api_routes.py``. Keeping them outside
+# this module leaves ``create_app`` focused on application setup and middleware.
+from src.api_routes import catalog_router, telemetry_router
 from src.app_settings import AppSettings
 from src.legacy_catalog import LegacyCatalogService
-from src.telemetry_cache import MIB, TelemetryPdfCache
-from src.telemetry_runtime_config import TelemetryRuntimeConfig
-from src.send_telemetry_file import SendTelemetryFile
-from src.telemetry import Telemetry, TelemetryError
+from src.telemetry.cache import MIB, TelemetryPdfCache
+from src.telemetry.config import TelemetryRuntimeConfig
 
 logger = logging.getLogger(__name__)
 _PUBLIC_PATHS = {"/", "/favicon.ico", "/health"}
@@ -29,9 +38,8 @@ _PUBLIC_PREFIXES = ("/static/",)
 
 
 def _read_app_version(base_dir: Path) -> str:
-    version_file = base_dir / "version.json"
     try:
-        payload = json.loads(version_file.read_text(encoding="utf-8"))
+        payload = json.loads((base_dir / "version.json").read_text(encoding="utf-8"))
         version = str(payload.get("version", "")).strip()
         return version or "0.0.0"
     except Exception:
@@ -53,6 +61,7 @@ def create_app(
     settings: Optional[AppSettings] = None,
     legacy_catalog_service: Optional[LegacyCatalogService] = None,
 ) -> FastAPI:
+    """Configure application state, middleware and domain routers."""
     app_settings = settings or AppSettings.from_env()
     telemetry_config = TelemetryRuntimeConfig.load()
     telemetry_cache = TelemetryPdfCache(
@@ -65,7 +74,6 @@ def create_app(
     server.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
     base_dir = Path(__file__).resolve().parent.parent
-    app_version = _read_app_version(base_dir)
     templates = Jinja2Templates(directory=str(base_dir / "templates"))
     server.mount("/static", StaticFiles(directory=str(base_dir / "static")), name="static")
 
@@ -78,10 +86,14 @@ def create_app(
     )
 
     server.state.settings = app_settings
-    server.state.legacy_catalog_service = legacy_catalog_service or LegacyCatalogService()
-    server.state.app_version = app_version
+    server.state.legacy_catalog_service = (
+        legacy_catalog_service or LegacyCatalogService()
+    )
+    server.state.app_version = _read_app_version(base_dir)
     server.state.telemetry_config = telemetry_config
-    server.state.telemetry_semaphore = asyncio.Semaphore(telemetry_config.max_concurrency)
+    server.state.telemetry_semaphore = asyncio.Semaphore(
+        telemetry_config.max_concurrency
+    )
     server.state.telemetry_pdf_cache = telemetry_cache
     server.state.telemetry_cache_locks = {}
 
@@ -99,7 +111,10 @@ def create_app(
             request,
             server.state.settings.api_key_header,
         )
-        if provided_api_key and secrets.compare_digest(provided_api_key, expected_api_key):
+        if provided_api_key and secrets.compare_digest(
+            provided_api_key,
+            expected_api_key,
+        ):
             return await call_next(request)
 
         client_host = request.client.host if request.client else "unknown"
@@ -115,13 +130,12 @@ def create_app(
 
     @server.get("/")
     async def index(request: Request):
-        settings = server.state.settings
         return templates.TemplateResponse(
             request,
             "index.html",
             {
                 "app_version": server.state.app_version,
-                "api_key_header": settings.api_key_header,
+                "api_key_header": server.state.settings.api_key_header,
                 "cache_max_documents": telemetry_config.cache_max_docs,
                 "cache_max_mb": telemetry_config.cache_max_mb,
                 "max_concurrency": telemetry_config.max_concurrency,
@@ -140,311 +154,13 @@ def create_app(
     async def health():
         return {"status": "ok"}
 
-    @server.get("/telemetry/cache/status")
-    async def telemetry_cache_status():
-        return server.state.telemetry_pdf_cache.stats()
+    # Registers /get-telemetry, /get-telemetry-compare and
+    # /telemetry/cache/status, all declared in src/api_routes.py.
+    server.include_router(telemetry_router)
 
-    @server.get("/get-telemetry")
-    async def get_telemetry(
-        year: Optional[int] = Query(default=None),
-        track_name: Optional[str] = Query(default=None, alias="trackName"),
-        session: Optional[str] = Query(default=None),
-        driver_name: Optional[str] = Query(default=None, alias="driverName"),
-    ):
-        if year is None or not track_name or not session or not driver_name:
-            return JSONResponse(
-                {
-                    "error": (
-                        "Missing required parameters: year, trackName, session, driverName"
-                    )
-                },
-                status_code=400,
-            )
-
-        telemetry = Telemetry(
-            year=year,
-            track_name=track_name,
-            session=session,
-            driver_name=driver_name,
-            max_plot_points=server.state.telemetry_config.max_plot_points,
-        )
-        send_manager = SendTelemetryFile()
-        cache_manager = server.state.telemetry_pdf_cache
-        cache_filename = cache_manager.single_filename(year, track_name, session, driver_name)
-
-        cached_file_path = cache_manager.get_cached_path(cache_filename)
-        if cached_file_path:
-            logger.info(
-                "[telemetry] cache-hit single file=%s year=%s track=%s session=%s driver=%s",
-                cache_filename,
-                year,
-                track_name,
-                session,
-                driver_name,
-            )
-            return send_manager.send_file_from_path(file_path=cached_file_path)
-
-        cache_lock = server.state.telemetry_cache_locks.setdefault(cache_filename, asyncio.Lock())
-
-        try:
-            async with cache_lock:
-                cached_file_path = cache_manager.get_cached_path(cache_filename)
-                if cached_file_path:
-                    logger.info(
-                        "[telemetry] cache-hit-after-lock single file=%s year=%s track=%s session=%s driver=%s",
-                        cache_filename,
-                        year,
-                        track_name,
-                        session,
-                        driver_name,
-                    )
-                    return send_manager.send_file_from_path(file_path=cached_file_path)
-
-                async with server.state.telemetry_semaphore:
-                    output_path = cache_manager.prepare_output_path(cache_filename)
-                    logger.info(
-                        "[telemetry] cache-miss generating-fastf1 single file=%s year=%s track=%s session=%s driver=%s",
-                        cache_filename,
-                        year,
-                        track_name,
-                        session,
-                        driver_name,
-                    )
-                    try:
-                        generated_path = await asyncio.to_thread(
-                            telemetry.get_fl_telemetry,
-                            output_path,
-                        )
-                        file_path = cache_manager.commit_output(
-                            cache_filename,
-                            generated_path,
-                        )
-                    except Exception:
-                        cache_manager.discard_output(output_path)
-                        raise
-                    logger.info(
-                        "[telemetry] generated-fastf1 single file=%s path=%s",
-                        cache_filename,
-                        file_path,
-                    )
-            response = send_manager.send_file_from_path(file_path=file_path)
-            return response
-        except FileNotFoundError as exc:
-            logger.exception("[telemetry] generated single PDF was not found")
-            raise HTTPException(
-                status_code=404,
-                detail="Generated telemetry file not found.",
-            ) from exc
-        except TelemetryError as exc:
-            logger.exception("[telemetry] single telemetry generation failed")
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Data not found. Could not process telemetry data. "
-                    "Please check the provided parameters."
-                ),
-            ) from exc
-        except Exception as exc:
-            logger.exception("[telemetry] unexpected single telemetry error")
-            raise HTTPException(
-                status_code=500,
-                detail="An internal error occurred while generating telemetry.",
-            ) from exc
-
-    @server.get("/get-telemetry-compare")
-    async def get_telemetry_compare(
-        year: Optional[int] = Query(default=None),
-        track_name: Optional[str] = Query(default=None, alias="trackName"),
-        session: Optional[str] = Query(default=None),
-        driver_a: Optional[str] = Query(default=None, alias="driverA"),
-        driver_b: Optional[str] = Query(default=None, alias="driverB"),
-    ):
-        if year is None or not track_name or not session or not driver_a or not driver_b:
-            return JSONResponse(
-                {
-                    "error": (
-                        "Missing required parameters: year, trackName, session, driverA, driverB"
-                    )
-                },
-                status_code=400,
-            )
-
-        telemetry = Telemetry(
-            year=year,
-            track_name=track_name,
-            session=session,
-            driver_name=driver_a,
-            max_plot_points=server.state.telemetry_config.max_plot_points,
-        )
-        send_manager = SendTelemetryFile()
-        cache_manager = server.state.telemetry_pdf_cache
-        cache_filename = cache_manager.comparison_filename(
-            year=year,
-            track_name=track_name,
-            session=session,
-            driver_a=driver_a,
-            driver_b=driver_b,
-        )
-
-        cached_file_path = cache_manager.get_cached_path(cache_filename)
-        if cached_file_path:
-            logger.info(
-                "[telemetry] cache-hit compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
-                cache_filename,
-                year,
-                track_name,
-                session,
-                driver_a,
-                driver_b,
-            )
-            return send_manager.send_file_from_path(file_path=cached_file_path)
-
-        cache_lock = server.state.telemetry_cache_locks.setdefault(cache_filename, asyncio.Lock())
-
-        try:
-            async with cache_lock:
-                cached_file_path = cache_manager.get_cached_path(cache_filename)
-                if cached_file_path:
-                    logger.info(
-                        "[telemetry] cache-hit-after-lock compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
-                        cache_filename,
-                        year,
-                        track_name,
-                        session,
-                        driver_a,
-                        driver_b,
-                    )
-                    return send_manager.send_file_from_path(file_path=cached_file_path)
-
-                async with server.state.telemetry_semaphore:
-                    output_path = cache_manager.prepare_output_path(cache_filename)
-                    logger.info(
-                        "[telemetry] cache-miss generating-fastf1 compare file=%s year=%s track=%s session=%s driver_a=%s driver_b=%s",
-                        cache_filename,
-                        year,
-                        track_name,
-                        session,
-                        driver_a,
-                        driver_b,
-                    )
-                    try:
-                        generated_path = await asyncio.to_thread(
-                            telemetry.get_comparison_telemetry_pdf,
-                            driver_a,
-                            driver_b,
-                            output_path,
-                        )
-                        file_path = cache_manager.commit_output(
-                            cache_filename,
-                            generated_path,
-                        )
-                    except Exception:
-                        cache_manager.discard_output(output_path)
-                        raise
-                    logger.info(
-                        "[telemetry] generated-fastf1 compare file=%s path=%s",
-                        cache_filename,
-                        file_path,
-                    )
-            response = send_manager.send_file_from_path(file_path=file_path)
-            return response
-        except FileNotFoundError as exc:
-            logger.exception("[telemetry] generated comparison PDF was not found")
-            raise HTTPException(
-                status_code=404,
-                detail="Generated telemetry file not found.",
-            ) from exc
-        except TelemetryError as exc:
-            logger.exception("[telemetry] comparison telemetry generation failed")
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Data not found. Could not process comparison telemetry data. "
-                    "Please check the provided parameters."
-                ),
-            ) from exc
-        except Exception as exc:
-            logger.exception("[telemetry] unexpected comparison telemetry error")
-            raise HTTPException(
-                status_code=500,
-                detail="An internal error occurred while generating telemetry.",
-            ) from exc
-
-    @server.get("/legacy/catalog/events")
-    async def legacy_catalog_events(
-        year: Optional[int] = Query(default=None),
-    ):
-        if year is None:
-            raise HTTPException(status_code=400, detail="Missing required parameter: year")
-
-        try:
-            events = await asyncio.to_thread(
-                server.state.legacy_catalog_service.get_events,
-                year,
-            )
-            return {
-                "year": year,
-                "events": events,
-            }
-        except Exception as exc:
-            logger.exception("[legacy-catalog] event lookup failed year=%s", year)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Could not load events for year {year}.",
-            ) from exc
-
-    @server.get("/legacy/catalog/years")
-    async def legacy_catalog_years():
-        try:
-            years = await asyncio.to_thread(server.state.legacy_catalog_service.get_years)
-            return {"years": years}
-        except Exception as exc:
-            logger.exception("[legacy-catalog] year lookup failed")
-            raise HTTPException(
-                status_code=400,
-                detail="Could not load available years.",
-            ) from exc
-
-    @server.get("/legacy/catalog/drivers")
-    async def legacy_catalog_drivers(
-        year: Optional[int] = Query(default=None),
-        track_name: Optional[str] = Query(default=None, alias="trackName"),
-        session: Optional[str] = Query(default=None),
-    ):
-        if year is None or not track_name or not session:
-            raise HTTPException(
-                status_code=400,
-                detail="Missing required parameters: year, trackName, session",
-            )
-
-        try:
-            drivers = await asyncio.to_thread(
-                server.state.legacy_catalog_service.get_drivers,
-                year,
-                track_name,
-                session,
-            )
-            return {
-                "year": year,
-                "track_name": track_name,
-                "session": session,
-                "drivers": drivers,
-            }
-        except Exception as exc:
-            logger.exception(
-                "[legacy-catalog] driver lookup failed year=%s track=%s session=%s",
-                year,
-                track_name,
-                session,
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Could not load driver catalog. "
-                    "Please verify year/trackName/session values."
-                ),
-            ) from exc
-
+    # Registers /legacy/catalog/years, /events and /drivers, also declared in
+    # src/api_routes.py. Core routes (/, /health and /status) remain above.
+    server.include_router(catalog_router)
     return server
 
 

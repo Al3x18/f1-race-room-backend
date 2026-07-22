@@ -1,3 +1,10 @@
+"""Discover seasons, events, sessions, and drivers through FastF1.
+
+The legacy catalog feeds client selection controls before PDF generation. It
+normalizes FastF1/pandas values into JSON-safe dictionaries and keeps short
+in-memory caches for event and driver lookups to reduce repeated upstream work.
+"""
+
 from __future__ import annotations
 
 import threading

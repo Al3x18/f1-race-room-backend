@@ -1,4 +1,4 @@
-from src.telemetry_runtime_config import TelemetryRuntimeConfig
+from src.telemetry.config import TelemetryRuntimeConfig
 
 
 def test_default_cache_limits(tmp_path, monkeypatch):

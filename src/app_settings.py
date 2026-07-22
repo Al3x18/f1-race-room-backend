@@ -1,3 +1,10 @@
+"""Load application-level security and CORS settings.
+
+``AppSettings`` contains only configuration shared by the HTTP application.
+Telemetry generation limits and cache settings belong to
+``src.telemetry.config`` instead.
+"""
+
 import os
 from dataclasses import dataclass, field
 
